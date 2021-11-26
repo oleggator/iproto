@@ -17,3 +17,6 @@ futures = "0.3"
 
 [workspace]
 members = ["bench"]
+
+[profile.dev]
+opt-level = 3
