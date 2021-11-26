@@ -2,7 +2,7 @@ use std::io::{Cursor};
 use std::sync::Arc;
 use sharded_slab::Slab;
 use serde::{Serialize};
-use tokio::sync::{Notify, RwLock};
+use tokio::sync::{Notify, Mutex};
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::sync::oneshot;
 use rmp_serde::decode;
@@ -26,7 +26,7 @@ pub struct Connection {
     requests: Slab<Request>,
     requests_not_full_notify: Notify,
 
-    write_buffer: RwLock<Vec<u8>>,
+    write_buffer: Mutex<Vec<u8>>,
 }
 
 const KEY_CODE: u8 = 0x00;
@@ -59,7 +59,7 @@ impl Connection {
             requests_to_process_tx,
             requests: Slab::new(),
             requests_not_full_notify: Notify::new(),
-            write_buffer: RwLock::new(Vec::new()),
+            write_buffer: Mutex::new(Vec::new()),
         });
 
         let conn_clone = conn.clone();
@@ -79,7 +79,7 @@ impl Connection {
     pub async fn write_call_request_to_buf<T: Serialize>(&self, request_id: usize, name: &str, data: &T) -> std::io::Result<()> {
         use std::io::Write;
 
-        let mut write_buf = self.write_buffer.write().await;
+        let mut write_buf = self.write_buffer.lock().await;
         let write_buf: &mut Vec<u8> = write_buf.as_mut();
         let begin = write_buf.len();
 
@@ -146,7 +146,7 @@ impl Connection {
                 None => break,
             };
 
-            let mut write_buf = self.write_buffer.write().await;
+            let mut write_buf = self.write_buffer.lock().await;
             let write_buf: &mut Vec<u8> = write_buf.as_mut();
 
             write_stream.write_all(write_buf).await.unwrap();
