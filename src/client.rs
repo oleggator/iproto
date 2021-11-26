@@ -118,19 +118,13 @@ impl Connection {
             T: Serialize,
             R: DeserializeOwned,
     {
-        let entry = loop {
-            match self.requests.vacant_entry() {
-                Some(entry) => break entry,
-                None => {
-                    dbg!("slab is full!");
-                    self.requests_not_full_notify.notified().await;
-                }
-            }
-        };
-
-        let request_id = entry.key();
         let (tx, rx) = oneshot::channel();
-        entry.insert(Request { request_id, tx });
+        let request_id = {
+            let entry = self.requests.vacant_entry().unwrap();
+            let request_id = entry.key();
+            entry.insert(Request { request_id, tx });
+            request_id
+        };
 
         self.write_call_request_to_buf(request_id, name, data).await?;
         self.requests_to_process_tx.send(request_id).await.unwrap();

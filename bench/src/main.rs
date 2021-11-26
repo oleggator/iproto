@@ -1,47 +1,14 @@
 use std::io;
 use iproto::client::Connection;
-
-
 use futures::future::join_all;
 use hdrhistogram::{sync::SyncHistogram, Histogram};
 use tokio::time::Instant;
-use serde::{Deserialize, Serialize};
-
-#[derive(Deserialize, Debug)]
-struct TarantoolInput {
-    host: String,
-    user: String,
-    password: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct Input {
-    procedure_name: String,
-    tarantool: TarantoolInput,
-}
-
-#[derive(Serialize, Debug)]
-struct LatencyOutput {
-    p50: u64,
-    p90: u64,
-    p99: u64,
-    min: u64,
-    max: u64,
-    mean: u64,
-}
-
-#[derive(Serialize, Debug)]
-struct Output {
-    time: i64,
-    requests: i64,
-    latency: LatencyOutput,
-}
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let conn = Connection::connect("localhost:3301").await.unwrap();
 
-    let iterations = 160000;
+    let iterations = 1_600_000;
 
     let worker_n = 128;
     let iterations_per_worker = iterations / worker_n;
@@ -71,19 +38,13 @@ async fn main() -> io::Result<()> {
     let elapsed = begin.elapsed();
     histogram.refresh();
 
-    let result = Output {
-        time: elapsed.as_nanos() as i64,
-        requests: iterations,
-        latency: LatencyOutput {
-            p50: histogram.value_at_quantile(0.50),
-            p90: histogram.value_at_quantile(0.90),
-            p99: histogram.value_at_quantile(0.99),
-            min: histogram.min(),
-            max: histogram.max(),
-            mean: histogram.mean() as u64,
-        },
-    };
-    println!("{:#?}", result);
+    println!("rps: {}", ((iterations as f64) / elapsed.as_secs_f64()) as u64);
+    println!("p50: {}", histogram.value_at_quantile(0.50));
+    println!("p90: {}", histogram.value_at_quantile(0.90));
+    println!("p99: {}", histogram.value_at_quantile(0.99));
+    println!("min: {}", histogram.min());
+    println!("max: {}", histogram.max());
+    println!("mean: {}", histogram.mean() as u64);
 
     Ok(())
 }
