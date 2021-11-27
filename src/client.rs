@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::io::{BufReader, BufWriter};
 use tokio::sync::mpsc;
 use futures::future::try_join;
+use crate::iproto::consts;
 
 struct Request {
     request_id: usize,
@@ -28,16 +29,6 @@ pub struct Connection {
 
     write_buffer: Mutex<Vec<u8>>,
 }
-
-const KEY_CODE: u8 = 0x00;
-const CALL_REQUEST: u8 = 0x0a;
-const KEY_SYNC: u8 = 0x01;
-const IPROTO_SCHEMA_VERSION: u8 = 0x05;
-const KEY_DATA: u8 = 0x30;
-const KEY_ERROR: u8 = 0x31;
-
-const KEY_TUPLE: u8 = 0x21;
-const KEY_FUNCTION_NAME: u8 = 0x22;
 
 const DISCONNECTED_STATE: u8 = 0;
 const CONNECTED_STATE: u8 = 0;
@@ -88,18 +79,18 @@ impl Connection {
 
         encode::write_map_len(write_buf, 2).unwrap();
         {
-            encode::write_pfix(write_buf, KEY_CODE).unwrap();
-            encode::write_pfix(write_buf, CALL_REQUEST).unwrap();
+            encode::write_pfix(write_buf, consts::IPROTO_REQUEST_TYPE).unwrap();
+            encode::write_pfix(write_buf, consts::IPROTO_CALL).unwrap();
 
-            encode::write_pfix(write_buf, KEY_SYNC).unwrap();
+            encode::write_pfix(write_buf, consts::IPROTO_SYNC).unwrap();
             encode::write_u64(write_buf, request_id as u64).unwrap();
 
             encode::write_map_len(write_buf, 2).unwrap();
             {
-                encode::write_pfix(write_buf, KEY_FUNCTION_NAME).unwrap();
+                encode::write_pfix(write_buf, consts::IPROTO_FUNCTION_NAME).unwrap();
                 encode::write_str(write_buf, name).unwrap();
 
-                encode::write_pfix(write_buf, KEY_TUPLE).unwrap();
+                encode::write_pfix(write_buf, consts::IPROTO_TUPLE).unwrap();
                 rmp_serde::encode::write(write_buf, data).unwrap();
             }
         }
@@ -189,13 +180,13 @@ impl Connection {
             for _ in 0..map_len {
                 let code = rmp::decode::read_pfix(&mut resp_reader).unwrap();
                 match code {
-                    KEY_SYNC => {
+                    consts::IPROTO_SYNC => {
                         request_id = Some(rmp::decode::read_u64(&mut resp_reader).unwrap() as usize);
                     }
-                    KEY_CODE => {
+                    consts::IPROTO_REQUEST_TYPE => {
                         _request_code = Some(rmp::decode::read_u32(&mut resp_reader).unwrap());
                     }
-                    IPROTO_SCHEMA_VERSION => {
+                    consts::IPROTO_SCHEMA_VERSION => {
                         rmp::decode::read_u32(&mut resp_reader).unwrap();
                     }
                     _ => {
@@ -212,10 +203,10 @@ impl Connection {
             assert_eq!(map_len, 1);
             let code = rmp::decode::read_pfix(&mut resp_reader).unwrap();
             match code {
-                KEY_DATA => {
+                consts::IPROTO_DATA => {
                     req.tx.send(resp_reader).unwrap();
                 }
-                KEY_ERROR => {
+                consts::IPROTO_ERROR => {
                     panic!("error");
                 }
                 _ => {
