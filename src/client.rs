@@ -120,10 +120,24 @@ impl Connection {
         self.write_call_request_to_buf(request_id, name, data).await?;
         self.requests_to_process_tx.send(request_id).await.unwrap();
 
-        let cursor = rx.await.unwrap();
-        let result = decode::from_read(cursor).unwrap();
+        let mut cursor = rx.await.unwrap();
 
-        Ok(result)
+        // decode body
+        let map_len = rmp::decode::read_map_len(&mut cursor).unwrap();
+        assert_eq!(map_len, 1);
+        let code = rmp::decode::read_pfix(&mut cursor).unwrap();
+        match code {
+            consts::IPROTO_DATA => {
+                let result = decode::from_read(cursor).unwrap();
+                Ok(result)
+            }
+            consts::IPROTO_ERROR => {
+                panic!("error");
+            }
+            _ => {
+                panic!("invalid op");
+            }
+        }
     }
 
     async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<usize>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
@@ -197,22 +211,7 @@ impl Connection {
 
             let request_id = request_id.unwrap();
             let req = self.requests.take(request_id).unwrap();
-
-            // decode body
-            let map_len = rmp::decode::read_map_len(&mut resp_reader).unwrap();
-            assert_eq!(map_len, 1);
-            let code = rmp::decode::read_pfix(&mut resp_reader).unwrap();
-            match code {
-                consts::IPROTO_DATA => {
-                    req.tx.send(resp_reader).unwrap();
-                }
-                consts::IPROTO_ERROR => {
-                    panic!("error");
-                }
-                _ => {
-                    panic!("invalid op");
-                }
-            }
+            req.tx.send(resp_reader).unwrap();
         }
 
         Ok(())
