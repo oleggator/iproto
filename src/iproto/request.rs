@@ -54,9 +54,9 @@ impl<W: Write> Request<W> for Ping {
 
 
 pub struct Call<'a, T: Serialize> {
-    pub(crate) request_id: usize,
-    pub(crate) procedure_name: &'a str,
-    pub(crate) args: &'a T,
+    request_id: usize,
+    procedure_name: &'a str,
+    args: &'a T,
 }
 
 impl<'a, T: Serialize> Call<'a, T> {

@@ -1,18 +1,15 @@
-use std::io::{Cursor};
-use std::sync::Arc;
+use std::io::Cursor;
+use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
 use sharded_slab::Slab;
-use serde::{Serialize};
-use tokio::sync::{Notify, Mutex};
-use tokio::net::{TcpStream, ToSocketAddrs};
-use tokio::sync::oneshot;
+use serde::Serialize;
+use tokio::sync::{mpsc, oneshot, Notify, Mutex};
+use tokio::net::{TcpStream, ToSocketAddrs, tcp::{OwnedWriteHalf, OwnedReadHalf}};
 use rmp_serde::decode;
-use serde::de::DeserializeOwned;
-use tokio::net::tcp::{OwnedWriteHalf, OwnedReadHalf};
-use std::sync::atomic::{AtomicU8, Ordering};
+use serde::de::{DeserializeOwned, IgnoredAny};
 use tokio::io::{BufReader, BufWriter};
-use tokio::sync::mpsc;
 use futures::future::try_join;
 use crate::iproto::{consts, request};
+
 
 struct RequestHandle {
     request_id: usize,
@@ -137,8 +134,8 @@ impl Connection {
 
             let mut write_buf = self.write_buffer.lock().await;
 
-            write_stream.write_all(write_buf.as_mut()).await.unwrap();
-            write_stream.flush().await.unwrap();
+            write_stream.write_all(write_buf.as_mut()).await?;
+            write_stream.flush().await?;
 
             write_buf.truncate(0);
         }
@@ -153,7 +150,7 @@ impl Connection {
 
         let mut payload_len_raw = [0; 5];
         while self.state.load(Ordering::Relaxed) == CONNECTED_STATE {
-            read_stream.read_exact(&mut payload_len_raw).await.unwrap();
+            read_stream.read_exact(&mut payload_len_raw).await?;
 
             if payload_len_raw[0] != 0xCE {
                 panic!("invalid resp");
@@ -165,7 +162,7 @@ impl Connection {
                 + (payload_len_raw[4] as usize);
 
             let mut resp_buf: Vec<u8> = vec![0; len];
-            read_stream.read_exact(&mut resp_buf).await.unwrap();
+            read_stream.read_exact(&mut resp_buf).await?;
 
             let mut request_id: Option<usize> = None;
             let mut _request_code: Option<u32> = None;
@@ -187,7 +184,7 @@ impl Connection {
                         rmp::decode::read_u32(&mut resp_reader).unwrap();
                     }
                     _ => {
-                        panic!("invalid resp code");
+                        let _: IgnoredAny = rmp_serde::decode::from_read(&mut resp_reader).unwrap();
                     }
                 }
             }
