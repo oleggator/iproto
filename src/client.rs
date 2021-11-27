@@ -7,15 +7,14 @@ use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::sync::oneshot;
 use rmp_serde::decode;
 use serde::de::DeserializeOwned;
-use rmp::encode;
 use tokio::net::tcp::{OwnedWriteHalf, OwnedReadHalf};
 use std::sync::atomic::{AtomicU8, Ordering};
 use tokio::io::{BufReader, BufWriter};
 use tokio::sync::mpsc;
 use futures::future::try_join;
-use crate::iproto::consts;
+use crate::iproto::{consts, request};
 
-struct Request {
+struct RequestHandle {
     request_id: usize,
     tx: oneshot::Sender<Cursor<Vec<u8>>>,
 }
@@ -24,7 +23,7 @@ pub struct Connection {
     state: AtomicU8,
     requests_to_process_tx: mpsc::Sender<usize>,
 
-    requests: Slab<Request>,
+    requests: Slab<RequestHandle>,
     requests_not_full_notify: Notify,
 
     write_buffer: Mutex<Vec<u8>>,
@@ -67,33 +66,17 @@ impl Connection {
         Ok(conn)
     }
 
-    pub async fn write_call_request_to_buf<T: Serialize>(&self, request_id: usize, name: &str, data: &T) -> std::io::Result<()> {
-        use std::io::Write;
-
+    async fn write_req_to_buf<R>(&self, req: &R) -> Result<(), rmp_serde::encode::Error>
+        where R: request::Request<Vec<u8>>,
+    {
         let mut write_buf = self.write_buffer.lock().await;
         let write_buf: &mut Vec<u8> = write_buf.as_mut();
         let begin = write_buf.len();
 
         // placeholder for body size (u32)
-        write_buf.write_all(&[0xCE, 0, 0, 0, 0])?;
+        write_buf.extend_from_slice(&[0xCE, 0, 0, 0, 0]);
 
-        encode::write_map_len(write_buf, 2).unwrap();
-        {
-            encode::write_pfix(write_buf, consts::IPROTO_REQUEST_TYPE).unwrap();
-            encode::write_pfix(write_buf, consts::IPROTO_CALL).unwrap();
-
-            encode::write_pfix(write_buf, consts::IPROTO_SYNC).unwrap();
-            encode::write_u64(write_buf, request_id as u64).unwrap();
-
-            encode::write_map_len(write_buf, 2).unwrap();
-            {
-                encode::write_pfix(write_buf, consts::IPROTO_FUNCTION_NAME).unwrap();
-                encode::write_str(write_buf, name).unwrap();
-
-                encode::write_pfix(write_buf, consts::IPROTO_TUPLE).unwrap();
-                rmp_serde::encode::write(write_buf, data).unwrap();
-            }
-        }
+        req.encode(write_buf)?;
 
         let body_len = write_buf.len() - 5 - begin;
         write_buf[begin + 1] = (body_len >> 24) as u8;
@@ -113,11 +96,12 @@ impl Connection {
         let request_id = {
             let entry = self.requests.vacant_entry().unwrap();
             let request_id = entry.key();
-            entry.insert(Request { request_id, tx });
+            entry.insert(RequestHandle { request_id, tx });
             request_id
         };
 
-        self.write_call_request_to_buf(request_id, name, data).await?;
+        let req = request::Call::new(request_id, name, data);
+        self.write_req_to_buf(&req).await.unwrap();
         self.requests_to_process_tx.send(request_id).await.unwrap();
 
         let mut cursor = rx.await.unwrap();
@@ -152,9 +136,8 @@ impl Connection {
             };
 
             let mut write_buf = self.write_buffer.lock().await;
-            let write_buf: &mut Vec<u8> = write_buf.as_mut();
 
-            write_stream.write_all(write_buf).await.unwrap();
+            write_stream.write_all(write_buf.as_mut()).await.unwrap();
             write_stream.flush().await.unwrap();
 
             write_buf.truncate(0);
