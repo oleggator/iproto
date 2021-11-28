@@ -12,9 +12,15 @@ use crate::iproto::{consts, request};
 
 type Buffer = Vec<u8>;
 
+#[derive(Debug)]
+struct CursorRef {
+    pub buffer_key: usize,
+    pub position: u64,
+}
+
 struct RequestHandle {
     request_id: usize,
-    tx: oneshot::Sender<Cursor<Buffer>>,
+    tx: oneshot::Sender<CursorRef>,
 }
 
 pub struct Connection {
@@ -54,7 +60,6 @@ impl Connection {
         tokio::spawn(async move {
             let writer_task = conn_clone.writer(requests_to_process_rx, write_stream);
             let reader_task = conn_clone.reader(read_stream);
-
             match try_join(writer_task, reader_task).await {
                 Ok(_) => {}
                 Err(_) => {}
@@ -100,7 +105,15 @@ impl Connection {
         let buffer_key = self.write_req_to_buf(&req).unwrap();
         self.requests_to_process_tx.send(buffer_key).await.unwrap();
 
-        let mut cursor = rx.await.unwrap();
+        let CursorRef {
+            buffer_key,
+            position,
+        } = rx.await.unwrap();
+
+        let buffer = self.buffer_pool.get(buffer_key).unwrap();
+        let buffer_ref: &Buffer = buffer.as_ref();
+        let mut cursor = Cursor::new(buffer_ref);
+        cursor.set_position(position);
 
         // decode body
         let map_len = rmp::decode::read_map_len(&mut cursor).unwrap();
@@ -109,6 +122,7 @@ impl Connection {
         match code {
             consts::IPROTO_DATA => {
                 let result = decode::from_read(cursor).unwrap();
+                self.buffer_pool.clear(buffer_key);
                 Ok(result)
             }
             consts::IPROTO_ERROR => {
@@ -168,14 +182,22 @@ impl Connection {
                 + ((payload_len_raw[3] as usize) << 8)
                 + (payload_len_raw[4] as usize);
 
-            let mut resp_buf: Buffer = vec![0; len];
+            let mut resp_buf = self.buffer_pool.clone().create_owned().unwrap();
+            let buffer_key = resp_buf.key();
+            resp_buf.resize(len, 0);
             read_stream.read_exact(&mut resp_buf).await?;
-            let mut resp_reader = Cursor::new(resp_buf);
+
+            let resp_buf_ref: &mut Buffer = resp_buf.as_mut();
+            let mut resp_reader = Cursor::new(resp_buf_ref);
 
             let header = crate::iproto::response::ResponseHeader::decode(&mut resp_reader).unwrap();
             let request_id = header.request_id();
+
             let req = self.requests.take(request_id).unwrap();
-            req.tx.send(resp_reader).unwrap();
+            req.tx.send(CursorRef {
+                buffer_key,
+                position: resp_reader.position(),
+            }).unwrap();
         }
 
         Ok(())
