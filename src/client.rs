@@ -11,10 +11,11 @@ use futures::future::try_join;
 use crate::iproto::{consts, request};
 use parking_lot::Mutex;
 
+type Buffer = Vec<u8>;
 
 struct RequestHandle {
     request_id: usize,
-    tx: oneshot::Sender<Cursor<Vec<u8>>>,
+    tx: oneshot::Sender<Cursor<Buffer>>,
 }
 
 pub struct Connection {
@@ -24,7 +25,7 @@ pub struct Connection {
     requests: Slab<RequestHandle>,
     requests_not_full_notify: Notify,
 
-    write_buffer: Mutex<Vec<u8>>,
+    write_buffer: Mutex<Buffer>,
 }
 
 const DISCONNECTED_STATE: u8 = 0;
@@ -65,10 +66,10 @@ impl Connection {
     }
 
     fn write_req_to_buf<R>(&self, req: &R) -> Result<(), rmp_serde::encode::Error>
-        where R: request::Request<Vec<u8>>,
+        where R: request::Request<Buffer>,
     {
         let mut write_buf = self.write_buffer.lock();
-        let write_buf: &mut Vec<u8> = write_buf.as_mut();
+        let write_buf: &mut Buffer = write_buf.as_mut();
         let begin = write_buf.len();
 
         // placeholder for body size (u32)
@@ -125,7 +126,7 @@ impl Connection {
     async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<usize>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
 
-        let mut tmp_buf: Vec<u8> = Vec::new();
+        let mut tmp_buf = Buffer::new();
         let mut write_stream = BufWriter::with_capacity(128 * 1024, write_stream);
 
         while self.state.load(Ordering::Relaxed) == CONNECTED_STATE {
@@ -166,7 +167,7 @@ impl Connection {
                 + ((payload_len_raw[3] as usize) << 8)
                 + (payload_len_raw[4] as usize);
 
-            let mut resp_buf: Vec<u8> = vec![0; len];
+            let mut resp_buf: Buffer = vec![0; len];
             read_stream.read_exact(&mut resp_buf).await?;
 
             let mut request_id: Option<usize> = None;
