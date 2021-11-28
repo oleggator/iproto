@@ -4,13 +4,30 @@ use futures::future::join_all;
 // use hdrhistogram::{sync::SyncHistogram, Histogram};
 use tokio::time::Instant;
 
-#[tokio::main]
-async fn main() -> io::Result<()> {
+
+#[cfg(target_os = "macos")]
+fn main() -> io::Result<()> {
+    let rt = tokio::runtime::Runtime::new()?;
+    rt.block_on(test())
+}
+
+#[cfg(target_os = "linux")]
+fn main() -> io::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && args[1] == "--io_uring" {
+        tokio_uring::start(test())
+    } else {
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(test())
+    }
+}
+
+async fn test() -> io::Result<()> {
     let conn = Connection::connect("localhost:3301").await.unwrap();
 
-    let iterations = 10_000_000;
+    let iterations = 50_000_000;
 
-    let worker_n = 128;
+    let worker_n = 512;
     let iterations_per_worker = iterations / worker_n;
     let mut workers = Vec::new();
 

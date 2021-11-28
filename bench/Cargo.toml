@@ -12,3 +12,6 @@ tokio = { version = "1", features = ["full"] }
 
 [dependencies.iproto]
 path = ".."
+
+[target.'cfg(linux)'.dependencies]
+tokio-uring = "0.1.0"
