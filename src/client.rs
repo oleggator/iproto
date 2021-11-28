@@ -1,6 +1,6 @@
 use std::io::Cursor;
 use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
-use sharded_slab::Slab;
+use sharded_slab::{Pool, Slab};
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::net::{TcpStream, ToSocketAddrs, tcp::{OwnedWriteHalf, OwnedReadHalf}};
@@ -9,7 +9,6 @@ use serde::de::DeserializeOwned;
 use tokio::io::{BufReader, BufWriter};
 use futures::future::try_join;
 use crate::iproto::{consts, request};
-use parking_lot::Mutex;
 
 type Buffer = Vec<u8>;
 
@@ -25,7 +24,7 @@ pub struct Connection {
     requests: Slab<RequestHandle>,
     requests_not_full_notify: Notify,
 
-    write_buffer: Mutex<Buffer>,
+    buffer_pool: Arc<Pool<Buffer>>,
 }
 
 const DISCONNECTED_STATE: u8 = 0;
@@ -48,7 +47,7 @@ impl Connection {
             requests_to_process_tx,
             requests: Slab::new(),
             requests_not_full_notify: Notify::new(),
-            write_buffer: Mutex::new(Vec::new()),
+            buffer_pool: Arc::new(Pool::new()),
         });
 
         let conn_clone = conn.clone();
@@ -65,25 +64,23 @@ impl Connection {
         Ok(conn)
     }
 
-    fn write_req_to_buf<R>(&self, req: &R) -> Result<(), rmp_serde::encode::Error>
+    fn write_req_to_buf<R>(&self, req: &R) -> Result<usize, rmp_serde::encode::Error>
         where R: request::Request<Buffer>,
     {
-        let mut write_buf = self.write_buffer.lock();
-        let write_buf: &mut Buffer = write_buf.as_mut();
-        let begin = write_buf.len();
+        let mut write_buf = self.buffer_pool.create().unwrap();
 
         // placeholder for body size (u32)
         write_buf.extend_from_slice(&[0xCE, 0, 0, 0, 0]);
 
-        req.encode(write_buf)?;
+        req.encode(write_buf.as_mut())?;
 
-        let body_len = write_buf.len() - 5 - begin;
-        write_buf[begin + 1] = (body_len >> 24) as u8;
-        write_buf[begin + 2] = (body_len >> 16) as u8;
-        write_buf[begin + 3] = (body_len >> 8) as u8;
-        write_buf[begin + 4] = body_len as u8;
+        let body_len = write_buf.len() - 5;
+        write_buf[1] = (body_len >> 24) as u8;
+        write_buf[2] = (body_len >> 16) as u8;
+        write_buf[3] = (body_len >> 8) as u8;
+        write_buf[4] = body_len as u8;
 
-        Ok(())
+        Ok(write_buf.key())
     }
 
     pub async fn call<'a, T, R>(&self, name: &str, data: &T) -> std::io::Result<R>
@@ -100,8 +97,8 @@ impl Connection {
         };
 
         let req = request::Call::new(request_id, name, data);
-        self.write_req_to_buf(&req).unwrap();
-        self.requests_to_process_tx.send(request_id).await.unwrap();
+        let buffer_key = self.write_req_to_buf(&req).unwrap();
+        self.requests_to_process_tx.send(buffer_key).await.unwrap();
 
         let mut cursor = rx.await.unwrap();
 
@@ -126,24 +123,27 @@ impl Connection {
     async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<usize>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
 
-        let mut tmp_buf = Buffer::new();
         let mut write_stream = BufWriter::with_capacity(128 * 1024, write_stream);
 
         while self.state.load(Ordering::Relaxed) == CONNECTED_STATE {
-            let _request_id = match requests_to_process_rx.recv().await {
-                Some(request_id) => request_id,
-                None => break,
-            };
-
+            let buffer_key = requests_to_process_rx.recv().await.unwrap();
             {
-                let mut write_buf = self.write_buffer.lock();
-                std::mem::swap(&mut tmp_buf, &mut write_buf);
+                let mut write_buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
+                write_stream.write_all(&mut write_buf).await?;
+                self.buffer_pool.clear(buffer_key);
             }
 
-            write_stream.write_all(tmp_buf.as_mut()).await?;
-            write_stream.flush().await?;
+            for _ in 0..10 {
+                if let Ok(buffer_key) = requests_to_process_rx.try_recv() {
+                    let mut write_buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
+                    write_stream.write_all(&mut write_buf).await?;
+                    self.buffer_pool.clear(buffer_key);
+                } else {
+                    break;
+                }
+            }
 
-            tmp_buf.clear();
+            write_stream.flush().await?;
         }
 
         Ok(())
