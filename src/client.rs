@@ -133,6 +133,7 @@ impl Connection {
                 self.buffer_pool.clear(buffer_key);
             }
 
+            // TODO: change batching behaviour
             for _ in 0..10 {
                 if let Ok(buffer_key) = requests_to_process_rx.try_recv() {
                     let mut write_buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
