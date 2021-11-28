@@ -2,13 +2,14 @@ use std::io::Cursor;
 use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
 use sharded_slab::Slab;
 use serde::Serialize;
-use tokio::sync::{mpsc, oneshot, Notify, Mutex};
+use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::net::{TcpStream, ToSocketAddrs, tcp::{OwnedWriteHalf, OwnedReadHalf}};
 use rmp_serde::decode;
 use serde::de::{DeserializeOwned, IgnoredAny};
 use tokio::io::{BufReader, BufWriter};
 use futures::future::try_join;
 use crate::iproto::{consts, request};
+use parking_lot::Mutex;
 
 
 struct RequestHandle {
@@ -63,10 +64,10 @@ impl Connection {
         Ok(conn)
     }
 
-    async fn write_req_to_buf<R>(&self, req: &R) -> Result<(), rmp_serde::encode::Error>
+    fn write_req_to_buf<R>(&self, req: &R) -> Result<(), rmp_serde::encode::Error>
         where R: request::Request<Vec<u8>>,
     {
-        let mut write_buf = self.write_buffer.lock().await;
+        let mut write_buf = self.write_buffer.lock();
         let write_buf: &mut Vec<u8> = write_buf.as_mut();
         let begin = write_buf.len();
 
@@ -98,7 +99,7 @@ impl Connection {
         };
 
         let req = request::Call::new(request_id, name, data);
-        self.write_req_to_buf(&req).await.unwrap();
+        self.write_req_to_buf(&req).unwrap();
         self.requests_to_process_tx.send(request_id).await.unwrap();
 
         let mut cursor = rx.await.unwrap();
@@ -124,6 +125,7 @@ impl Connection {
     async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<usize>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
 
+        let mut tmp_buf: Vec<u8> = Vec::new();
         let mut write_stream = BufWriter::with_capacity(128 * 1024, write_stream);
 
         while self.state.load(Ordering::Relaxed) == CONNECTED_STATE {
@@ -132,12 +134,15 @@ impl Connection {
                 None => break,
             };
 
-            let mut write_buf = self.write_buffer.lock().await;
+            {
+                let mut write_buf = self.write_buffer.lock();
+                std::mem::swap(&mut tmp_buf, &mut write_buf);
+            }
 
-            write_stream.write_all(write_buf.as_mut()).await?;
+            write_stream.write_all(tmp_buf.as_mut()).await?;
             write_stream.flush().await?;
 
-            write_buf.truncate(0);
+            tmp_buf.clear();
         }
 
         Ok(())
