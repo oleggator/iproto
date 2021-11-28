@@ -5,7 +5,7 @@ use serde::Serialize;
 use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::net::{TcpStream, ToSocketAddrs, tcp::{OwnedWriteHalf, OwnedReadHalf}};
 use rmp_serde::decode;
-use serde::de::{DeserializeOwned, IgnoredAny};
+use serde::de::DeserializeOwned;
 use tokio::io::{BufReader, BufWriter};
 use futures::future::try_join;
 use crate::iproto::{consts, request};
@@ -169,33 +169,10 @@ impl Connection {
 
             let mut resp_buf: Buffer = vec![0; len];
             read_stream.read_exact(&mut resp_buf).await?;
-
-            let mut request_id: Option<usize> = None;
-            let mut _request_code: Option<u32> = None;
-
             let mut resp_reader = Cursor::new(resp_buf);
 
-            // decode header
-            let map_len = rmp::decode::read_map_len(&mut resp_reader).unwrap();
-            for _ in 0..map_len {
-                let code = rmp::decode::read_pfix(&mut resp_reader).unwrap();
-                match code {
-                    consts::IPROTO_SYNC => {
-                        request_id = Some(rmp::decode::read_u64(&mut resp_reader).unwrap() as usize);
-                    }
-                    consts::IPROTO_REQUEST_TYPE => {
-                        _request_code = Some(rmp::decode::read_u32(&mut resp_reader).unwrap());
-                    }
-                    consts::IPROTO_SCHEMA_VERSION => {
-                        rmp::decode::read_u32(&mut resp_reader).unwrap();
-                    }
-                    _ => {
-                        let _: IgnoredAny = rmp_serde::decode::from_read(&mut resp_reader).unwrap();
-                    }
-                }
-            }
-
-            let request_id = request_id.unwrap();
+            let header = crate::iproto::response::ResponseHeader::decode(&mut resp_reader).unwrap();
+            let request_id = header.request_id();
             let req = self.requests.take(request_id).unwrap();
             req.tx.send(resp_reader).unwrap();
         }
