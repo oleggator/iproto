@@ -6,11 +6,13 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = [
+    "rt", "net", "sync", "io-util",
+    "test-util", "macros", "time",
+    "parking_lot",
+] }
 rmp-serde = "0.15"
 serde = "1.0"
-rmpv = "1.0"
-bytes = { version = "1.0", features = ["serde"] }
 sharded-slab = "0.1"
 rmp = "^0.8"
 futures = "0.3"
