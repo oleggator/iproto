@@ -206,17 +206,30 @@ impl Connection {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::Duration;
     use tokio::time::timeout;
+    use super::Connection;
+
+    async fn conn() -> Arc<Connection> {
+        Connection::connect("localhost:3301").await.unwrap()
+    }
 
     #[tokio::test]
     async fn client_test() {
-        let conn = crate::client::Connection::connect("localhost:3301").await.unwrap();
+        let conn = conn().await;
 
         let (result, ): (usize, ) = timeout(Duration::from_secs(2), conn.call("sum", &(1, 2))).await.unwrap().unwrap();
         assert_eq!(result, 3);
 
         let (result, ): (usize, ) = timeout(Duration::from_secs(2), conn.call("sum", &(1, 2))).await.unwrap().unwrap();
         assert_eq!(result, 3);
+    }
+
+    #[tokio::test]
+    async fn test_tarantool_error() {
+        let conn = conn().await;
+
+        let _: () = conn.call("not_existing_procedure", &(1, 2, 3)).await.unwrap();
     }
 }
