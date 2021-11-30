@@ -148,7 +148,8 @@ impl Connection {
             }
 
             // TODO: change batching behaviour
-            for _ in 0..10 {
+            const OPTIMAL_PAYLOAD_SIZE: usize = 1000;
+            while write_stream.buffer().len() < OPTIMAL_PAYLOAD_SIZE {
                 if let Ok(buffer_key) = requests_to_process_rx.try_recv() {
                     let mut write_buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
                     write_stream.write_all(&mut write_buf).await?;
