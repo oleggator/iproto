@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
 use sharded_slab::{Pool, Slab};
 use serde::Serialize;
@@ -9,6 +10,7 @@ use serde::de::DeserializeOwned;
 use tokio::io::{BufReader, BufWriter};
 use futures::future::try_join;
 use crate::iproto::{consts, request};
+use nix::sys::socket;
 
 type Buffer = Vec<u8>;
 
@@ -31,6 +33,8 @@ pub struct Connection {
     requests_not_full_notify: Notify,
 
     buffer_pool: Arc<Pool<Buffer>>,
+
+    mss: u32,
 }
 
 const DISCONNECTED_STATE: u8 = 0;
@@ -41,6 +45,8 @@ impl Connection {
         use tokio::io::AsyncReadExt;
 
         let stream = TcpStream::connect(addr).await?;
+        let mss = socket::getsockopt(stream.as_raw_fd(), socket::sockopt::TcpMaxSeg)?;
+
         let (mut read_stream, write_stream) = stream.into_split();
         {
             let mut greeting_raw = [0; 128];
@@ -54,6 +60,7 @@ impl Connection {
             requests: Slab::new(),
             requests_not_full_notify: Notify::new(),
             buffer_pool: Arc::new(Pool::new()),
+            mss,
         });
 
         let conn_clone = conn.clone();
