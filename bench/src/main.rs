@@ -25,7 +25,7 @@ fn main() -> io::Result<()> {
 async fn test() -> io::Result<()> {
     let conn = Connection::connect("localhost:3301").await.unwrap();
 
-    let iterations = 50_000_000;
+    let iterations = 5_000_000;
 
     let worker_n = 512;
     let iterations_per_worker = iterations / worker_n;
