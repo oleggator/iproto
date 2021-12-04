@@ -25,7 +25,7 @@ thiserror = "1.0"
 rmpv = { version = "1.0", features = ["with-serde"] }
 
 [workspace]
-members = ["tests/bench"]
+members = ["tests/bench", "server-bench"]
 
 [profile.release]
 lto = true
