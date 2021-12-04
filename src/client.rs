@@ -195,10 +195,17 @@ impl Connection {
 
             let header = response::ResponseHeader::decode(&mut resp_reader).unwrap();
             let req = self.pending_requests.take(header.request_id()).unwrap();
-            req.tx.send(CursorRef {
+
+            let cursor_ref = CursorRef {
                 buffer_key,
                 position: resp_reader.position(),
-            }).unwrap();
+            };
+
+            // resp_buf must be dropped before it was sent to prevent mutual access by receiver
+            // (if receivers gets the key before it was dropped it receives null)
+            drop(resp_buf);
+
+            req.tx.send(cursor_ref).unwrap();
         }
 
         Ok(())
