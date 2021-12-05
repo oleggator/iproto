@@ -4,6 +4,7 @@ use sharded_slab::Pool;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::sync::mpsc::Sender;
 use crate::iproto::consts;
 
 pub async fn serve<A: ToSocketAddrs>(addr: A) -> std::io::Result<()> {
@@ -40,109 +41,133 @@ impl Connection {
             socket.flush().await?;
         }
 
-        let (s, r) = tokio::sync::mpsc::channel(128);
+        let (req_s, req_r) = async_channel::bounded(128);
+        let (resp_s, resp_r) = tokio::sync::mpsc::channel(128);
+
+        let mut workers = vec![];
+        for _ in 0..64 {
+            let resp_s = resp_s.clone();
+            let req_r = req_r.clone();
+            let conn = self.clone();
+            workers.push(tokio::spawn(async move {
+                conn.handler(req_r, resp_s).await.unwrap();
+            }));
+        }
+
         let (read_stream, write_stream) = socket.into_split();
 
-        let writer_task = self.writer(write_stream, r);
-        let reader_task = self.clone().reader(read_stream, s);
+        let writer_task = self.writer(write_stream, resp_r);
+        let reader_task = self.clone().reader(read_stream, req_s);
 
         try_join(reader_task, writer_task).await.unwrap();
 
         Ok(())
     }
 
-    async fn reader(self: Arc<Self>, read_stream: OwnedReadHalf, responses_to_send: tokio::sync::mpsc::Sender<usize>) -> std::io::Result<()> {
+    async fn handler(
+        self: Arc<Self>,
+        req_r: async_channel::Receiver<usize>,
+        resp_s: Sender<usize>,
+    ) -> std::io::Result<()> {
+        loop {
+            let request_id = {
+                let mut request_type: Option<u8> = None;
+                let mut request_id: Option<u64> = None;
+
+                let buffer_key = req_r.recv().await.unwrap();
+                let mut buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
+
+                use rmp::decode::*;
+                let mut body_reader: &[u8] = &mut buf;
+
+                // header
+                let map_len = read_map_len(&mut body_reader).unwrap();
+                for _ in 0..map_len {
+                    let code = read_pfix(&mut body_reader).unwrap();
+                    match code {
+                        consts::IPROTO_REQUEST_TYPE => {
+                            request_type = Some(read_pfix(&mut body_reader).unwrap());
+                        }
+                        consts::IPROTO_SYNC => {
+                            request_id = Some(read_int(&mut body_reader).unwrap());
+                        }
+                        _ => { return Ok(()); }
+                    }
+                }
+
+                match request_type.unwrap() {
+                    consts::IPROTO_CALL => {
+                        let mut procedure_name: Option<String> = None;
+                        let mut tuple: Option<rmpv::Value> = None;
+
+                        let map_len = read_map_len(&mut body_reader).unwrap();
+                        for _ in 0..map_len {
+                            let code = read_pfix(&mut body_reader).unwrap();
+                            match code {
+                                consts::IPROTO_FUNCTION_NAME => {
+                                    procedure_name = Some(rmp_serde::decode::from_read(&mut body_reader).unwrap());
+                                }
+                                consts::IPROTO_TUPLE => {
+                                    tuple = Some(rmpv::decode::read_value(&mut body_reader).unwrap());
+                                }
+                                _ => { return Ok(()); }
+                            }
+                        }
+                    }
+                    consts::IPROTO_PING => {}
+                    _ => { return Ok(()); }
+                }
+
+                self.buffer_pool.clone().clear(buffer_key);
+                request_id.unwrap()
+            };
+
+            let buffer_key = {
+                use rmp::encode::*;
+                let mut buf = self.buffer_pool.clone().create_owned().unwrap();
+
+                let mut write_buffer_writer: &mut Vec<u8> = &mut buf;
+                {
+                    write_map_len(&mut write_buffer_writer, 2).unwrap();
+
+                    write_pfix(&mut write_buffer_writer, consts::RESPONSE_CODE_INDICATOR).unwrap();
+                    write_pfix(&mut write_buffer_writer, consts::IPROTO_OK).unwrap();
+
+                    write_pfix(&mut write_buffer_writer, consts::IPROTO_SYNC).unwrap();
+                    write_u64(&mut write_buffer_writer, request_id).unwrap();
+                }
+                {
+                    write_map_len(&mut write_buffer_writer, 1).unwrap();
+
+                    write_pfix(&mut write_buffer_writer, consts::IPROTO_DATA).unwrap();
+                    rmp_serde::encode::write(&mut write_buffer_writer, &(3, )).unwrap();
+                }
+
+                buf.key()
+            };
+            resp_s.send(buffer_key).await.unwrap();
+        }
+    }
+
+    async fn reader(self: Arc<Self>, read_stream: OwnedReadHalf, req_s: async_channel::Sender<usize>) -> std::io::Result<()> {
         let mut read_stream = BufReader::new(read_stream);
 
         let mut size_raw = [0; 5];
         loop {
-            let mut buf = self.buffer_pool.clone().create_owned().unwrap();
-            let body_size = {
-                read_stream.read_exact(&mut size_raw).await.unwrap();
-                let mut size_reader: &[u8] = &mut size_raw;
-                rmp::decode::read_int(&mut size_reader).unwrap()
-            };
-            buf.resize(body_size, 0);
-            read_stream.read_exact(&mut buf).await.unwrap();
-
-            let responses_to_send_clone = responses_to_send.clone();
-            let conn = self.clone();
-            tokio::spawn(async move {
-                let mut request_type: Option<u8> = None;
-                let mut request_id: Option<u64> = None;
-
-                {
-                    use rmp::decode::*;
-                    let mut body_reader: &[u8] = &mut buf;
-
-                    // header
-
-                    let map_len = read_map_len(&mut body_reader).unwrap();
-                    for _ in 0..map_len {
-                        let code = read_pfix(&mut body_reader).unwrap();
-                        match code {
-                            consts::IPROTO_REQUEST_TYPE => {
-                                request_type = Some(read_pfix(&mut body_reader).unwrap());
-                            }
-                            consts::IPROTO_SYNC => {
-                                request_id = Some(read_int(&mut body_reader).unwrap());
-                            }
-                            _ => { return; }
-                        }
-                    }
-
-                    match request_type.unwrap() {
-                        consts::IPROTO_CALL => {
-                            let mut procedure_name: Option<String> = None;
-                            let mut tuple: Option<rmpv::Value> = None;
-
-                            let map_len = read_map_len(&mut body_reader).unwrap();
-                            for _ in 0..map_len {
-                                let code = read_pfix(&mut body_reader).unwrap();
-                                match code {
-                                    consts::IPROTO_FUNCTION_NAME => {
-                                        procedure_name = Some(rmp_serde::decode::from_read(&mut body_reader).unwrap());
-                                    }
-                                    consts::IPROTO_TUPLE => {
-                                        tuple = Some(rmpv::decode::read_value(&mut body_reader).unwrap());
-                                    }
-                                    _ => { return; }
-                                }
-                            }
-                        }
-                        consts::IPROTO_PING => {}
-                        _ => { return; }
-                    }
-
-                    conn.buffer_pool.clear(buf.key());
-                }
-
-                let write_buffer_key = {
-                    use rmp::encode::*;
-                    let mut write_buffer = buf;
-                    write_buffer.clear();
-
-                    let mut write_buffer_writer: &mut Vec<u8> = write_buffer.as_mut();
-                    {
-                        write_map_len(&mut write_buffer_writer, 2).unwrap();
-
-                        write_pfix(&mut write_buffer_writer, consts::RESPONSE_CODE_INDICATOR).unwrap();
-                        write_pfix(&mut write_buffer_writer, consts::IPROTO_OK).unwrap();
-
-                        write_pfix(&mut write_buffer_writer, consts::IPROTO_SYNC).unwrap();
-                        write_u64(&mut write_buffer_writer, request_id.unwrap()).unwrap();
-                    }
-                    {
-                        write_map_len(&mut write_buffer_writer, 1).unwrap();
-
-                        write_pfix(&mut write_buffer_writer, consts::IPROTO_DATA).unwrap();
-                        rmp_serde::encode::write(&mut write_buffer_writer, &()).unwrap();
-                    }
-
-                    write_buffer.key()
+            let buffer_key = {
+                let mut buf = self.buffer_pool.clone().create_owned().unwrap();
+                let body_size = {
+                    read_stream.read_exact(&mut size_raw).await.unwrap();
+                    let mut size_reader: &[u8] = &mut size_raw;
+                    rmp::decode::read_int(&mut size_reader).unwrap()
                 };
-                responses_to_send_clone.send(write_buffer_key).await.unwrap();
-            });
+                buf.resize(body_size, 0);
+                read_stream.read_exact(&mut buf).await.unwrap();
+
+                buf.key()
+            };
+
+            req_s.send(buffer_key).await.unwrap();
         }
     }
 
