@@ -19,7 +19,7 @@ impl ResponseHeader {
             let code = rmp::decode::read_pfix(reader)?;
             match code {
                 RESPONSE_CODE_INDICATOR => {
-                    response_code = Some(rmp::decode::read_u32(reader)?);
+                    response_code = Some(rmp::decode::read_int(reader)?);
                 }
                 consts::IPROTO_SYNC => {
                     request_id = Some(rmp::decode::read_u64(reader)? as usize);
