@@ -1,15 +1,16 @@
 [package]
 name = "iproto"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
+license-file = "LICENSE"
+repository = "https://github.com/oleggator/iproto"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 tokio = { version = "1", features = [
-    "rt", "net", "sync", "io-util",
-    "test-util", "macros", "time",
-    "parking_lot",
+    "rt", "net", "sync", "io-util", "time",
+    "test-util", "macros", "parking_lot",
 ] }
 rmp-serde = "0.15"
 serde = "1.0"
