@@ -116,10 +116,11 @@ impl Connection {
         Ok(write_buf.key())
     }
 
-    pub async fn call<'a, T, R>(&self, name: &str, data: &T) -> Result<R, Error>
+    pub async fn make_request<Req, Resp, F>(&self, f: F) -> Result<Resp, Error>
         where
-            T: Serialize,
-            R: DeserializeOwned,
+            Req: request::Request<Buffer>,
+            Resp: response::ResponseBody,
+            F: FnOnce(usize) -> Req,
     {
         let (tx, rx) = oneshot::channel();
         let request_id = {
@@ -129,7 +130,7 @@ impl Connection {
             request_id
         };
 
-        let req = request::Call::new(request_id, name, data);
+        let req = f(request_id);
         let buffer_key = self.write_req_to_buf(&req).unwrap();
         self.requests_to_process_tx.send(buffer_key).await.unwrap();
 
@@ -145,8 +146,8 @@ impl Connection {
         const IPROTO_OK: u32 = consts::IPROTO_OK as u32;
         let result = match response_code_indicator {
             IPROTO_OK => {
-                let data_resp = response::CallResponse::decode(&mut cursor).unwrap();
-                Ok(data_resp.into_data())
+                let data_resp = Resp::decode(&mut cursor).unwrap();
+                Ok(data_resp)
             }
             0x8000..=0x8fff => {
                 let _error_code = response_code_indicator - 0x8000;
@@ -160,41 +161,22 @@ impl Connection {
         result
     }
 
+    pub async fn call<T, R>(&self, name: &str, data: &T) -> Result<R, Error>
+        where
+            T: Serialize,
+            R: DeserializeOwned,
+    {
+        let resp: response::CallResponse<R> = self.make_request(|request_id| {
+            request::Call::new(request_id, name, data)
+        }).await?;
+        Ok(resp.into_data())
+    }
+
     pub async fn auth(&self, username: &str, password: Option<&str>) -> Result<(), Error> {
-        let (tx, rx) = oneshot::channel();
-        let request_id = {
-            let entry = self.pending_requests.vacant_entry().unwrap();
-            let request_id = entry.key();
-            entry.insert(RequestHandle { request_id, tx });
-            request_id
-        };
-
-        let req = request::Auth::new(request_id, &self.salt, username, password);
-        let buffer_key = self.write_req_to_buf(&req).unwrap();
-        self.requests_to_process_tx.send(buffer_key).await.unwrap();
-
-        let TarantoolResp {
-            header: response::ResponseHeader { response_code_indicator, .. },
-            cursor_ref: CursorRef { buffer_key, position },
-        } = rx.await.unwrap().unwrap();
-
-        let buffer = self.buffer_pool.get(buffer_key).unwrap();
-        let mut cursor: Cursor<&Buffer> = Cursor::new(buffer.as_ref());
-        cursor.set_position(position);
-
-        const IPROTO_OK: u32 = consts::IPROTO_OK as u32;
-        let result = match response_code_indicator {
-            IPROTO_OK => Ok(()),
-            0x8000..=0x8fff => {
-                let _error_code = response_code_indicator - 0x8000;
-                let err_resp = ErrorResponse::decode(&mut cursor).unwrap();
-                Err(Error::TarantoolError(err_resp))
-            }
-            _ => { panic!("error") }
-        };
-        self.buffer_pool.clear(buffer_key);
-
-        result
+        let _resp: response::EmptyResponse = self.make_request(|request_id| {
+            request::Auth::new(request_id, &self.salt, username, password)
+        }).await?;
+        Ok(())
     }
 
     async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<usize>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
@@ -291,13 +273,14 @@ mod tests {
     #[tokio::test]
     async fn client_test() {
         let conn = conn().await;
+        let t = Duration::from_secs(2);
 
-        conn.auth("guest", None).await.unwrap();
+        timeout(t, conn.auth("guest", None)).await.unwrap().unwrap();
 
-        let (result, ): (usize, ) = timeout(Duration::from_secs(2), conn.call("sum", &(1, 2))).await.unwrap().unwrap();
+        let (result, ): (usize, ) = timeout(t, conn.call("sum", &(1, 2))).await.unwrap().unwrap();
         assert_eq!(result, 3);
 
-        let (result, ): (usize, ) = timeout(Duration::from_secs(2), conn.call("sum", &(1, 2))).await.unwrap().unwrap();
+        let (result, ): (usize, ) = timeout(t, conn.call("sum", &(1, 2))).await.unwrap().unwrap();
         assert_eq!(result, 3);
     }
 
