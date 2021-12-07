@@ -1,6 +1,8 @@
+use std::fmt::{Display, Formatter};
 use std::io::Cursor;
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
+
 use sharded_slab::{Pool, Slab};
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot, Notify};
@@ -8,18 +10,23 @@ use tokio::net::{TcpStream, ToSocketAddrs, tcp::{OwnedWriteHalf, OwnedReadHalf}}
 use serde::de::DeserializeOwned;
 use tokio::io::{BufReader, BufWriter};
 use futures::future::try_join;
-use crate::iproto::{consts, request, response};
 use nix::sys::socket;
-use response::ErrorResponse;
-use crate::iproto::response::ResponseBody;
+use thiserror::Error;
+
+use crate::iproto::{consts, request, response};
+use response::ResponseBody;
 
 type Buffer = Vec<u8>;
 
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum Error {
+    #[error("tarantool error")]
     TarantoolError(response::ErrorResponse),
+    #[error("invalid response")]
     InvalidResponse,
+    #[error("decoding error")]
     InvalidDecoding,
+    #[error("error")]
     ErrorCode(u8),
 }
 
@@ -151,7 +158,7 @@ impl Connection {
             }
             0x8000..=0x8fff => {
                 let _error_code = response_code_indicator - 0x8000;
-                let err_resp = ErrorResponse::decode(&mut cursor).unwrap();
+                let err_resp = response::ErrorResponse::decode(&mut cursor).unwrap();
                 Err(Error::TarantoolError(err_resp))
             }
             _ => { panic!("error") }
