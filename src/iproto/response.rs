@@ -1,13 +1,13 @@
 use std::io::Read;
+use rmp_serde::decode::Error;
 use serde::de::DeserializeOwned;
 use crate::iproto::consts;
 
+#[derive(Debug)]
 pub struct ResponseHeader {
-    request_id: usize,
-    response_code_indicator: u32,
+    pub request_id: usize,
+    pub response_code_indicator: u32,
 }
-
-const RESPONSE_CODE_INDICATOR: u8 = 0x00;
 
 impl ResponseHeader {
     pub fn decode<R: Read>(reader: &mut R) -> Result<Self, rmp_serde::decode::Error> {
@@ -18,7 +18,7 @@ impl ResponseHeader {
         for _ in 0..map_len {
             let code = rmp::decode::read_pfix(reader)?;
             match code {
-                RESPONSE_CODE_INDICATOR => {
+                consts::RESPONSE_CODE_INDICATOR => {
                     response_code = Some(rmp::decode::read_int(reader)?);
                 }
                 consts::IPROTO_SYNC => {
@@ -45,23 +45,149 @@ impl ResponseHeader {
     pub fn response_code_indicator(&self) -> u32 { self.response_code_indicator }
 }
 
-pub trait Response<R: Read, B: DeserializeOwned>: Sized {
-    const REQUEST_TYPE: u8;
+pub trait ResponseBody: Sized {
+    fn decode<R: Read>(reader: &mut R) -> Result<Self, rmp_serde::decode::Error>;
+}
 
-    fn from_parts(header: ResponseHeader, body: B) -> Self;
+pub struct Response<B: ResponseBody> {
+    header: ResponseHeader,
+    body: B,
+}
 
-    fn decode(reader: &mut R) -> Result<Self, rmp_serde::decode::Error> {
-        let header = Self::decode_header(reader)?;
-        let body = Self::decode_body(reader)?;
-
-        Ok(Self::from_parts(header, body))
+impl<B: ResponseBody> Response<B> {
+    pub fn from_parts(header: ResponseHeader, body: B) -> Self {
+        Self { header, body }
     }
+}
 
-    fn decode_header(reader: &mut R) -> Result<ResponseHeader, rmp_serde::decode::Error> {
-        ResponseHeader::decode(reader)
+
+pub struct CallResponse<D: DeserializeOwned> {
+    data: D,
+}
+
+impl<D: DeserializeOwned> CallResponse<D> {
+    pub fn into_data(self) -> D { self.data }
+}
+
+impl<D: DeserializeOwned> ResponseBody for CallResponse<D> {
+    fn decode<R: Read>(reader: &mut R) -> Result<Self, Error> {
+        let mut data: Option<D> = None;
+
+        let map_len = rmp::decode::read_map_len(reader).unwrap();
+        for _ in 0..map_len {
+            let code = rmp::decode::read_pfix(reader).unwrap();
+            match code {
+                consts::IPROTO_DATA => {
+                    data = Some(rmp_serde::decode::from_read(reader.by_ref()).unwrap());
+                }
+                _ => {
+                    let _: () = rmp_serde::decode::from_read(reader.by_ref()).unwrap();
+                    panic!("invalid op");
+                }
+            }
+        }
+
+        Ok(Self {
+            data: data.unwrap(),
+        })
     }
+}
 
-    fn decode_body(reader: &mut R) -> Result<B, rmp_serde::decode::Error> {
-        rmp_serde::decode::from_read(reader)
+#[derive(Debug)]
+pub struct ErrorExtra {
+    error_type: String,
+    error_file: String,
+    error_line: u64,
+    error_message: String,
+    errno: u64,
+    errcode: u64,
+}
+
+
+#[derive(Debug)]
+pub struct ErrorResponse {
+    error: String,
+    error_extra: Option<ErrorExtra>,
+}
+
+impl ResponseBody for ErrorResponse {
+    fn decode<R: Read>(reader: &mut R) -> Result<Self, Error> {
+        use rmp_serde::decode;
+
+        let mut err: Option<String> = None;
+        let mut error_extra: Option<ErrorExtra> = None;
+
+        let map_len = rmp::decode::read_map_len(reader).unwrap();
+        for _ in 0..map_len {
+            let code = rmp::decode::read_pfix(reader).unwrap();
+            match code {
+                consts::IPROTO_ERROR_24 => {
+                    err = Some(decode::from_read(reader.by_ref()).unwrap());
+                }
+                consts::IPROTO_ERROR => {
+                    let error_extra_map_len = rmp::decode::read_map_len(reader).unwrap();
+                    assert_eq!(error_extra_map_len, 1);
+
+                    let key = rmp::decode::read_pfix(reader).unwrap();
+                    assert_eq!(key, consts::MP_ERROR_STACK);
+
+                    let error_stack_len = rmp::decode::read_array_len(reader).unwrap();
+                    assert_eq!(error_stack_len, 1);
+
+                    let mut error_type: Option<String> = None;
+                    let mut error_file: Option<String> = None;
+                    let mut error_line: Option<u64> = None;
+                    let mut error_message: Option<String> = None;
+                    let mut errno: Option<u64> = None;
+                    let mut errcode: Option<u64> = None;
+
+                    let fields_n = rmp::decode::read_map_len(reader).unwrap();
+                    for _ in 0..fields_n {
+                        let code = rmp::decode::read_pfix(reader).unwrap();
+                        match code {
+                            consts::MP_ERROR_TYPE => {
+                                error_type = Some(rmp_serde::decode::from_read(reader.by_ref()).unwrap());
+                            }
+                            consts::MP_ERROR_FILE => {
+                                error_file = Some(rmp_serde::decode::from_read(reader.by_ref()).unwrap());
+                            }
+                            consts::MP_ERROR_LINE => {
+                                error_line = Some(rmp::decode::read_int(reader).unwrap());
+                            }
+                            consts::MP_ERROR_MESSAGE => {
+                                error_message = Some(rmp_serde::decode::from_read(reader.by_ref()).unwrap());
+                            }
+                            consts::MP_ERROR_ERRNO => {
+                                errno = Some(rmp::decode::read_int(reader).unwrap());
+                            }
+                            consts::MP_ERROR_ERRCODE => {
+                                errcode = Some(rmp::decode::read_int(reader).unwrap());
+                            }
+                            _ => {
+                                println!("invalid code: {}", code);
+                            }
+                        }
+                    }
+
+                    error_extra = Some(ErrorExtra {
+                        error_type: error_type.unwrap(),
+                        error_file: error_file.unwrap(),
+                        error_line: error_line.unwrap(),
+                        error_message: error_message.unwrap(),
+                        errno: errno.unwrap(),
+                        errcode: errcode.unwrap(),
+                    });
+                }
+                _ => {
+                    let _: () = decode::from_read(reader.by_ref()).unwrap();
+                    panic!("invalid op");
+                }
+            }
+        }
+
+        Ok(Self {
+            error: err.unwrap(),
+            error_extra,
+        })
     }
 }

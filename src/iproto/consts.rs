@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub const RESPONSE_CODE_INDICATOR: u8 = 0x00;
+
 pub const IPROTO_SELECT: u8 = 0x01;
 pub const IPROTO_INSERT: u8 = 0x02;
 pub const IPROTO_REPLACE: u8 = 0x03;
@@ -71,6 +73,15 @@ pub const IPROTO_FIELD_COLL: u8 = 0x02;
 pub const IPROTO_FIELD_IS_NULLABLE: u8 = 0x03;
 pub const IPROTO_FIELD_IS_AUTOINCREMENT: u8 = 0x04;
 pub const IPROTO_FIELD_SPAN: u8 = 0x05;
+
+pub const MP_ERROR_STACK: u8 = 0x00;
+pub const MP_ERROR_TYPE: u8 = 0x00;
+pub const MP_ERROR_FILE: u8 = 0x01;
+pub const MP_ERROR_LINE: u8 = 0x02;
+pub const MP_ERROR_MESSAGE: u8 = 0x03;
+pub const MP_ERROR_ERRNO: u8 = 0x04;
+pub const MP_ERROR_ERRCODE: u8 = 0x05;
+pub const MP_ERROR_FIELDS: u8 = 0x06;
 
 // Unknown error
 pub const ER_UNKNOWN: u8 = 0;

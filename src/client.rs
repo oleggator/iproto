@@ -5,24 +5,41 @@ use sharded_slab::{Pool, Slab};
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::net::{TcpStream, ToSocketAddrs, tcp::{OwnedWriteHalf, OwnedReadHalf}};
-use rmp_serde::decode;
 use serde::de::DeserializeOwned;
 use tokio::io::{BufReader, BufWriter};
 use futures::future::try_join;
 use crate::iproto::{consts, request, response};
 use nix::sys::socket;
+use response::ErrorResponse;
+use crate::iproto::response::ResponseBody;
 
 type Buffer = Vec<u8>;
 
 #[derive(Debug)]
-struct CursorRef {
+pub enum Error {
+    TarantoolError(response::ErrorResponse),
+    InvalidResponse,
+    InvalidDecoding,
+    ErrorCode(u8),
+}
+
+#[derive(Debug)]
+pub struct TarantoolResp {
+    pub header: response::ResponseHeader,
+    pub cursor_ref: CursorRef,
+}
+
+pub type TarantoolResult = Result<TarantoolResp, Error>;
+
+#[derive(Debug)]
+pub struct CursorRef {
     pub buffer_key: usize,
     pub position: u64,
 }
 
 struct RequestHandle {
     request_id: usize,
-    tx: oneshot::Sender<CursorRef>,
+    tx: oneshot::Sender<TarantoolResult>,
 }
 
 pub struct Connection {
@@ -95,7 +112,7 @@ impl Connection {
         Ok(write_buf.key())
     }
 
-    pub async fn call<'a, T, R>(&self, name: &str, data: &T) -> std::io::Result<R>
+    pub async fn call<'a, T, R>(&self, name: &str, data: &T) -> Result<R, Error>
         where
             T: Serialize,
             R: DeserializeOwned,
@@ -112,28 +129,31 @@ impl Connection {
         let buffer_key = self.write_req_to_buf(&req).unwrap();
         self.requests_to_process_tx.send(buffer_key).await.unwrap();
 
-        let CursorRef { buffer_key, position } = rx.await.unwrap();
+        let TarantoolResp {
+            header: response::ResponseHeader { response_code_indicator, .. },
+            cursor_ref: CursorRef { buffer_key, position },
+        } = rx.await.unwrap().unwrap();
+
         let buffer = self.buffer_pool.get(buffer_key).unwrap();
         let mut cursor: Cursor<&Buffer> = Cursor::new(buffer.as_ref());
         cursor.set_position(position);
 
-        // decode body
-        let map_len = rmp::decode::read_map_len(&mut cursor).unwrap();
-        assert_eq!(map_len, 1);
-        let code = rmp::decode::read_pfix(&mut cursor).unwrap();
-        match code {
-            consts::IPROTO_DATA => {
-                let result = decode::from_read(cursor).unwrap();
-                self.buffer_pool.clear(buffer_key);
-                Ok(result)
+        const IPROTO_OK: u32 = consts::IPROTO_OK as u32;
+        let result = match response_code_indicator {
+            IPROTO_OK => {
+                let data_resp = response::CallResponse::decode(&mut cursor).unwrap();
+                Ok(data_resp.into_data())
             }
-            consts::IPROTO_ERROR => {
-                panic!("error");
+            0x8000..=0x8fff => {
+                let _error_code = response_code_indicator - 0x8000;
+                let err_resp = ErrorResponse::decode(&mut cursor).unwrap();
+                Err(Error::TarantoolError(err_resp))
             }
-            _ => {
-                panic!("invalid op");
-            }
-        }
+            _ => { panic!("error") }
+        };
+        self.buffer_pool.clear(buffer_key);
+
+        result
     }
 
     async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<usize>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
@@ -194,18 +214,22 @@ impl Connection {
             let mut resp_reader = Cursor::new(resp_buf_ref);
 
             let header = response::ResponseHeader::decode(&mut resp_reader).unwrap();
-            let req = self.pending_requests.take(header.request_id()).unwrap();
+            let request_id = header.request_id();
 
-            let cursor_ref = CursorRef {
-                buffer_key,
-                position: resp_reader.position(),
-            };
+            let result = Ok(TarantoolResp {
+                header,
+                cursor_ref: CursorRef {
+                    buffer_key,
+                    position: resp_reader.position(),
+                },
+            });
 
             // resp_buf must be dropped before it was sent to prevent mutual access by receiver
             // (if receivers gets the key before it was dropped it receives null)
             drop(resp_buf);
 
-            req.tx.send(cursor_ref).unwrap();
+            let req = self.pending_requests.take(request_id).unwrap();
+            req.tx.send(result).unwrap();
         }
 
         Ok(())
@@ -219,9 +243,9 @@ mod tests {
     use tokio::time::timeout;
     use super::Connection;
 
-    async fn conn() -> Arc<Connection> {
-        Connection::connect("localhost:3301").await.unwrap()
-    }
+    const TESTING_HOST: &str = "localhost:3301";
+
+    async fn conn() -> Arc<Connection> { Connection::connect(TESTING_HOST).await.unwrap() }
 
     #[tokio::test]
     async fn client_test() {
@@ -235,9 +259,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[should_panic]
     async fn test_tarantool_error() {
         let conn = conn().await;
-
         let _: () = conn.call("not_existing_procedure", &(1, 2, 3)).await.unwrap();
     }
 }
