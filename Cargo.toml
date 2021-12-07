@@ -18,6 +18,8 @@ sharded-slab = "0.1"
 rmp = "^0.8"
 futures = "0.3"
 nix = "0.23"
+sha-1 = "0.9"
+base64 = "0.13"
 
 [workspace]
 members = ["bench"]

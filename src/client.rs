@@ -51,6 +51,7 @@ pub struct Connection {
 
     buffer_pool: Arc<Pool<Buffer>>,
 
+    salt: Vec<u8>,
     mss: u32,
 }
 
@@ -65,10 +66,12 @@ impl Connection {
         let mss = socket::getsockopt(stream.as_raw_fd(), socket::sockopt::TcpMaxSeg)?;
 
         let (mut read_stream, write_stream) = stream.into_split();
-        {
+        let salt = {
             let mut greeting_raw = [0; 128];
             read_stream.read_exact(&mut greeting_raw).await?;
-        }
+            let salt_b64 = std::str::from_utf8(&greeting_raw[64..108]).unwrap().trim();
+            base64::decode(salt_b64).unwrap()
+        };
 
         let (requests_to_process_tx, requests_to_process_rx) = mpsc::channel(128);
         let conn = Arc::new(Connection {
@@ -77,6 +80,7 @@ impl Connection {
             pending_requests: Slab::new(),
             requests_not_full_notify: Notify::new(),
             buffer_pool: Arc::new(Pool::new()),
+            salt,
             mss,
         });
 
@@ -144,6 +148,43 @@ impl Connection {
                 let data_resp = response::CallResponse::decode(&mut cursor).unwrap();
                 Ok(data_resp.into_data())
             }
+            0x8000..=0x8fff => {
+                let _error_code = response_code_indicator - 0x8000;
+                let err_resp = ErrorResponse::decode(&mut cursor).unwrap();
+                Err(Error::TarantoolError(err_resp))
+            }
+            _ => { panic!("error") }
+        };
+        self.buffer_pool.clear(buffer_key);
+
+        result
+    }
+
+    pub async fn auth(&self, username: &str, password: Option<&str>) -> Result<(), Error> {
+        let (tx, rx) = oneshot::channel();
+        let request_id = {
+            let entry = self.pending_requests.vacant_entry().unwrap();
+            let request_id = entry.key();
+            entry.insert(RequestHandle { request_id, tx });
+            request_id
+        };
+
+        let req = request::Auth::new(request_id, &self.salt, username, password);
+        let buffer_key = self.write_req_to_buf(&req).unwrap();
+        self.requests_to_process_tx.send(buffer_key).await.unwrap();
+
+        let TarantoolResp {
+            header: response::ResponseHeader { response_code_indicator, .. },
+            cursor_ref: CursorRef { buffer_key, position },
+        } = rx.await.unwrap().unwrap();
+
+        let buffer = self.buffer_pool.get(buffer_key).unwrap();
+        let mut cursor: Cursor<&Buffer> = Cursor::new(buffer.as_ref());
+        cursor.set_position(position);
+
+        const IPROTO_OK: u32 = consts::IPROTO_OK as u32;
+        let result = match response_code_indicator {
+            IPROTO_OK => Ok(()),
             0x8000..=0x8fff => {
                 let _error_code = response_code_indicator - 0x8000;
                 let err_resp = ErrorResponse::decode(&mut cursor).unwrap();
@@ -251,6 +292,8 @@ mod tests {
     async fn client_test() {
         let conn = conn().await;
 
+        conn.auth("guest", None).await.unwrap();
+
         let (result, ): (usize, ) = timeout(Duration::from_secs(2), conn.call("sum", &(1, 2))).await.unwrap().unwrap();
         assert_eq!(result, 3);
 
@@ -263,5 +306,12 @@ mod tests {
     async fn test_tarantool_error() {
         let conn = conn().await;
         let _: () = conn.call("not_existing_procedure", &(1, 2, 3)).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[should_panic]
+    async fn test_invalid_user() {
+        let conn = conn().await;
+        conn.auth("kek", None).await.unwrap();
     }
 }
