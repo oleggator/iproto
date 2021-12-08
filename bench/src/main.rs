@@ -15,9 +15,11 @@ fn main() -> io::Result<()> {
 fn main() -> io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "--io_uring" {
+        println!("io_uring");
         tokio_uring::start(test())
     } else {
-        let rt = tokio::runtime::Runtime::new()?;
+        println!("epoll");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
         rt.block_on(test())
     }
 }
@@ -27,7 +29,9 @@ async fn test() -> io::Result<()> {
 
     let iterations = 5_000_000;
 
-    let worker_n = 512;
+    // let worker_n = 512;
+    let worker_n = 2048;
+
     let iterations_per_worker = iterations / worker_n;
     let mut workers = Vec::new();
 
