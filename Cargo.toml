@@ -21,6 +21,7 @@ nix = "0.23"
 sha-1 = "0.9"
 base64 = "0.13"
 thiserror = "1.0"
+rmpv = { version = "1.0", features=["with-serde"] }
 
 [workspace]
 members = ["bench"]

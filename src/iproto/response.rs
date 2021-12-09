@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::Read;
 use rmp_serde::decode::Error;
 use serde::de::DeserializeOwned;
@@ -101,6 +102,7 @@ pub struct ErrorExtra {
     error_message: String,
     errno: u64,
     errcode: u64,
+    error_fields: Option<HashMap<String, rmpv::Value>>,
 }
 
 
@@ -140,6 +142,7 @@ impl ResponseBody for ErrorResponse {
                     let mut error_message: Option<String> = None;
                     let mut errno: Option<u64> = None;
                     let mut errcode: Option<u64> = None;
+                    let mut error_fields: Option<HashMap<String, rmpv::Value>> = None;
 
                     let fields_n = rmp::decode::read_map_len(reader)?;
                     for _ in 0..fields_n {
@@ -163,6 +166,9 @@ impl ResponseBody for ErrorResponse {
                             consts::MP_ERROR_ERRCODE => {
                                 errcode = Some(rmp::decode::read_int(reader)?);
                             }
+                            consts::MP_ERROR_FIELDS => {
+                                error_fields = Some(rmp_serde::decode::from_read(reader.by_ref())?);
+                            }
                             _ => {
                                 println!("invalid code: {}", code);
                             }
@@ -176,6 +182,7 @@ impl ResponseBody for ErrorResponse {
                         error_message: error_message.unwrap(),
                         errno: errno.unwrap(),
                         errcode: errcode.unwrap(),
+                        error_fields,
                     });
                 }
                 _ => {
