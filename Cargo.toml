@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 license-file = "LICENSE"
 repository = "https://github.com/oleggator/iproto"
+description = "Tarantool iproto protocol implementation"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -21,7 +22,7 @@ nix = "0.23"
 sha-1 = "0.9"
 base64 = "0.13"
 thiserror = "1.0"
-rmpv = { version = "1.0", features=["with-serde"] }
+rmpv = { version = "1.0", features = ["with-serde"] }
 
 [workspace]
 members = ["bench"]
