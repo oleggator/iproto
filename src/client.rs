@@ -80,7 +80,7 @@ impl Connection {
             base64::decode(salt_b64).unwrap()
         };
 
-        let (requests_to_process_tx, requests_to_process_rx) = mpsc::channel(128);
+        let (requests_to_process_tx, requests_to_process_rx) = mpsc::channel(16_384);
         let conn = Arc::new(Connection {
             state: AtomicU8::new(CONNECTED_STATE),
             requests_to_process_tx,
