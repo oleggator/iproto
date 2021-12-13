@@ -9,6 +9,7 @@ edition = "2021"
 futures = "0.3"
 hdrhistogram = "7.2"
 tokio = { version = "1", features = ["full"] }
+jemallocator = "0.3"
 
 [dependencies.iproto]
 path = ".."

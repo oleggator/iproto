@@ -3,6 +3,12 @@ use iproto::client::Connection;
 use futures::future::join_all;
 // use hdrhistogram::{sync::SyncHistogram, Histogram};
 use tokio::time::Instant;
+#[cfg(not(target_env = "msvc"))]
+use jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
 
 
 #[cfg(target_os = "macos")]
