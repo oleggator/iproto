@@ -16,6 +16,12 @@ use thiserror::Error;
 use crate::iproto::{consts, request, response};
 use response::ResponseBody;
 
+const READ_BUFFER: usize = 128 * 1024;
+const WRITE_BUFFER: usize = 128 * 1024;
+
+// depends on the thread number
+const REQ_CHANNEL_BUFFER: usize = 16 * 1024;
+
 type Buffer = Vec<u8>;
 
 #[derive(Error, Debug)]
@@ -80,7 +86,7 @@ impl Connection {
             base64::decode(salt_b64).unwrap()
         };
 
-        let (requests_to_process_tx, requests_to_process_rx) = mpsc::channel(16_384);
+        let (requests_to_process_tx, requests_to_process_rx) = mpsc::channel(REQ_CHANNEL_BUFFER);
         let conn = Arc::new(Connection {
             state: AtomicU8::new(CONNECTED_STATE),
             requests_to_process_tx,
@@ -189,7 +195,7 @@ impl Connection {
     async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<usize>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
 
-        let mut write_stream = BufWriter::with_capacity(128 * 1024, write_stream);
+        let mut write_stream = BufWriter::with_capacity(WRITE_BUFFER, write_stream);
 
         while self.state.load(Ordering::Relaxed) == CONNECTED_STATE {
             let buffer_key = requests_to_process_rx.recv().await.unwrap();
@@ -220,7 +226,7 @@ impl Connection {
     async fn reader(&self, read_stream: OwnedReadHalf) -> std::io::Result<()> {
         use tokio::io::AsyncReadExt;
 
-        let mut read_stream = BufReader::with_capacity(128 * 1024, read_stream);
+        let mut read_stream = BufReader::with_capacity(READ_BUFFER, read_stream);
 
         let mut payload_len_raw = [0; 5];
         while self.state.load(Ordering::Relaxed) == CONNECTED_STATE {
