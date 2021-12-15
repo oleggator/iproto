@@ -137,6 +137,10 @@ impl Connection {
     {
         let (tx, rx) = oneshot::channel();
         let request_id = {
+            /* TODO
+                request must drop inside this function
+                otherwise memory leak may be occurred in the case of read or decode error
+            */
             let entry = self.pending_requests.vacant_entry().unwrap();
             let request_id = entry.key();
             entry.insert(RequestHandle { request_id, tx });
