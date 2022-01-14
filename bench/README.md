@@ -45,3 +45,20 @@ rps: 1792492
 taskset -c 1 cargo run -p bench
 rps: 1811333
 ```
+
+## Setup #4
+- i5-12600k
+- cpupower frequency-set --governor performance
+- linux 5.15.6
+
+```
+taskset -c 0 tarantool tarantool.lua
+
+# epoll (limited to one core)
+taskset -c 10 cargo run -p bench
+rps: 1942238
+
+# io_uring (limited to one core)
+taskset -c 10 cargo run -p bench -- --io_uring
+rps: 1906886
+```
