@@ -1,4 +1,3 @@
-use std::fmt::{Display, Formatter};
 use std::io::Cursor;
 use std::os::unix::io::AsRawFd;
 use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
@@ -97,15 +96,28 @@ impl Connection {
             mss,
         });
 
-        let conn_clone = conn.clone();
-        tokio::spawn(async move {
-            let writer_task = conn_clone.writer(requests_to_process_rx, write_stream);
-            let reader_task = conn_clone.reader(read_stream);
-            match try_join(writer_task, reader_task).await {
-                Ok(_) => {}
-                Err(_) => {}
-            }
-        });
+        let writer_conn = conn.clone();
+        let writer_task = tokio::task::Builder::new()
+            .name("writer")
+            .spawn(async move {
+                writer_conn.writer(requests_to_process_rx, write_stream).await
+            });
+
+        let reader_conn = conn.clone();
+        let reader_task = tokio::task::Builder::new()
+            .name("reader")
+            .spawn(async move {
+                reader_conn.reader(read_stream).await
+            });
+
+        tokio::task::Builder::new()
+            .name("iproto error catcher")
+            .spawn(async move {
+                match try_join(writer_task, reader_task).await {
+                    Ok(_) => {}
+                    Err(_) => {}
+                }
+            });
 
         Ok(conn)
     }

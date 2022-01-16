@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 futures = "0.3"
 hdrhistogram = "7.2"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full", "tracing"] }
 jemallocator = "0.3"
 
 [dependencies.iproto]
@@ -16,4 +16,3 @@ path = ".."
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-uring = "0.1.0"
-
