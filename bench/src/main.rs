@@ -52,7 +52,7 @@ async fn test() -> io::Result<()> {
             for _ in i * iterations_per_worker..(i + 1) * iterations_per_worker {
                 // let begin = Instant::now();
 
-                let (res, ): (usize, ) = conn.call("sum", &(1, 2)).await.unwrap();
+                let ((res, ), ): ((usize, ), ) = conn.call("csum", &(1, 2)).await.unwrap();
                 assert_eq!(res, 3);
 
                 // recorder.record(begin.elapsed().as_nanos() as u64).unwrap();
