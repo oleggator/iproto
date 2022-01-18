@@ -147,31 +147,33 @@ impl Connection {
             Resp: response::ResponseBody,
             F: FnOnce(usize) -> Req,
     {
-        let (tx, rx) = oneshot::channel();
-        let request_id = {
-            let entry = self.pending_requests.vacant_entry().unwrap();
-            let request_id = entry.key();
-            entry.insert(RequestHandle { request_id, tx });
-            request_id
-        };
-
-        let req = f(request_id);
-        let buffer_key = self.write_req_to_buf(&req).unwrap();
-        self.requests_to_process_tx.send(buffer_key).await.unwrap();
-
-        // create a guard reference to the request handle
-        // and defer removing of it until all references are dead.
-        // so if the future will be canceled request handle will be cleaned too
-        // https://docs.rs/sharded-slab/0.1.4/sharded_slab/struct.OwnedEntry.html
-        let _guard = self.pending_requests.clone().get_owned(request_id);
-        self.pending_requests.remove(request_id);
-
         let TarantoolResp {
             header: response::ResponseHeader { response_code_indicator, .. },
-            cursor_ref: CursorRef { buffer_key, position },
-        } = rx.await.unwrap().unwrap();
+            cursor_ref: CursorRef { buffer_key: resp_buffer_key, position },
+        } = {
+            let (tx, rx) = oneshot::channel();
+            let request_id = {
+                let entry = self.pending_requests.vacant_entry().unwrap();
+                let request_id = entry.key();
+                entry.insert(RequestHandle { request_id, tx });
+                request_id
+            };
 
-        let buffer = self.buffer_pool.get(buffer_key).unwrap();
+            // create a guard reference to the request handle
+            // and defer removing of it until all references are dead.
+            // so if the future will be canceled request handle will be cleaned too
+            // https://docs.rs/sharded-slab/0.1.4/sharded_slab/struct.OwnedEntry.html
+            let _guard = self.pending_requests.clone().get_owned(request_id);
+            self.pending_requests.remove(request_id);
+
+            let req = f(request_id);
+            let req_buffer_key = self.write_req_to_buf(&req).unwrap();
+            self.requests_to_process_tx.send(req_buffer_key).await.unwrap();
+
+            rx.await.unwrap().unwrap()
+        };
+
+        let buffer = self.buffer_pool.get(resp_buffer_key).unwrap();
         let mut cursor: Cursor<&Buffer> = Cursor::new(buffer.as_ref());
         cursor.set_position(position);
 
