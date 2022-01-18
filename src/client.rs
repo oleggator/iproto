@@ -58,7 +58,7 @@ pub struct Connection {
     state: AtomicU8,
     requests_to_process_tx: mpsc::Sender<usize>,
 
-    pending_requests: Slab<RequestHandle>,
+    pending_requests: Arc<Slab<RequestHandle>>,
     requests_not_full_notify: Notify,
 
     buffer_pool: Arc<Pool<Buffer>>,
@@ -89,7 +89,7 @@ impl Connection {
         let conn = Arc::new(Connection {
             state: AtomicU8::new(CONNECTED_STATE),
             requests_to_process_tx,
-            pending_requests: Slab::new(),
+            pending_requests: Arc::new(Slab::new()),
             requests_not_full_notify: Notify::new(),
             buffer_pool: Arc::new(Pool::new()),
             salt,
@@ -149,10 +149,6 @@ impl Connection {
     {
         let (tx, rx) = oneshot::channel();
         let request_id = {
-            /* TODO
-                request must drop inside this function
-                otherwise memory leak may be occurred in the case of read or decode error
-            */
             let entry = self.pending_requests.vacant_entry().unwrap();
             let request_id = entry.key();
             entry.insert(RequestHandle { request_id, tx });
@@ -162,6 +158,13 @@ impl Connection {
         let req = f(request_id);
         let buffer_key = self.write_req_to_buf(&req).unwrap();
         self.requests_to_process_tx.send(buffer_key).await.unwrap();
+
+        // create a guard reference to the request handle
+        // and defer removing of it until all references are dead.
+        // so if the future will be canceled request handle will be cleaned too
+        // https://docs.rs/sharded-slab/0.1.4/sharded_slab/struct.OwnedEntry.html
+        let _guard = self.pending_requests.clone().get_owned(request_id);
+        self.pending_requests.remove(request_id);
 
         let TarantoolResp {
             header: response::ResponseHeader { response_code_indicator, .. },
