@@ -45,7 +45,7 @@ pub type TarantoolResult = Result<TarantoolResp, Error>;
 
 #[derive(Debug)]
 pub struct CursorRef {
-    pub buffer_key: usize,
+    pub buffer: sharded_slab::pool::OwnedRefMut<Buffer>,
     pub position: u64,
 }
 
@@ -149,7 +149,7 @@ impl Connection {
     {
         let TarantoolResp {
             header: response::ResponseHeader { response_code_indicator, .. },
-            cursor_ref: CursorRef { buffer_key: resp_buffer_key, position },
+            cursor_ref: CursorRef { buffer: resp_buffer, position },
         } = {
             let (tx, rx) = oneshot::channel();
             let request_id = {
@@ -173,8 +173,7 @@ impl Connection {
             rx.await.unwrap().unwrap()
         };
 
-        let buffer = self.buffer_pool.get(resp_buffer_key).unwrap();
-        let mut cursor: Cursor<&Buffer> = Cursor::new(buffer.as_ref());
+        let mut cursor: Cursor<&Buffer> = Cursor::new(resp_buffer.as_ref());
         cursor.set_position(position);
 
         const IPROTO_OK: u32 = consts::IPROTO_OK as u32;
@@ -190,7 +189,6 @@ impl Connection {
             }
             _ => { panic!("error") }
         };
-        self.buffer_pool.clear(buffer_key);
 
         result
     }
@@ -262,31 +260,34 @@ impl Connection {
                 + ((payload_len_raw[3] as usize) << 8)
                 + (payload_len_raw[4] as usize);
 
+            /*
+                TODO: fix buffer leak in the case when receiver future canceled
+            */
             let mut resp_buf = self.buffer_pool.clone().create_owned().unwrap();
             let buffer_key = resp_buf.key();
+            // defer buffer clear
+            self.buffer_pool.clear(buffer_key);
+
             resp_buf.resize(len, 0);
             read_stream.read_exact(&mut resp_buf).await?;
 
-            let resp_buf_ref: &mut Buffer = resp_buf.as_mut();
+            let resp_buf_ref: &mut Buffer = &mut resp_buf.as_mut();
             let mut resp_reader = Cursor::new(resp_buf_ref);
 
             let header = response::ResponseHeader::decode(&mut resp_reader).unwrap();
-            let request_id = header.request_id();
 
-            let result = Ok(TarantoolResp {
-                header,
-                cursor_ref: CursorRef {
-                    buffer_key,
-                    position: resp_reader.position(),
-                },
-            });
+            if let Some(req) =  self.pending_requests.take(header.request_id()) {
+                let position = resp_reader.position();
+                let result = Ok(TarantoolResp {
+                    header,
+                    cursor_ref: CursorRef {
+                        buffer: resp_buf,
+                        position,
+                    },
+                });
 
-            // resp_buf must be dropped before it was sent to prevent mutual access by receiver
-            // (if receivers gets the key before it was dropped it receives null)
-            drop(resp_buf);
-
-            let req = self.pending_requests.take(request_id).unwrap();
-            req.tx.send(result).unwrap();
+                req.tx.send(result).unwrap();
+            }
         }
 
         Ok(())
