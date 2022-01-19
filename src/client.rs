@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use crate::iproto::{consts, request, response};
 use response::ResponseBody;
+use crate::utils::SlabEntryGuard;
 
 const READ_BUFFER: usize = 128 * 1024;
 const WRITE_BUFFER: usize = 128 * 1024;
@@ -58,7 +59,7 @@ pub struct Connection {
     state: AtomicU8,
     requests_to_process_tx: mpsc::Sender<usize>,
 
-    pending_requests: Arc<Slab<RequestHandle>>,
+    pending_requests: Slab<RequestHandle>,
     requests_not_full_notify: Notify,
 
     buffer_pool: Arc<Pool<Buffer>>,
@@ -89,7 +90,7 @@ impl Connection {
         let conn = Arc::new(Connection {
             state: AtomicU8::new(CONNECTED_STATE),
             requests_to_process_tx,
-            pending_requests: Arc::new(Slab::new()),
+            pending_requests: Slab::new(),
             requests_not_full_notify: Notify::new(),
             buffer_pool: Arc::new(Pool::new()),
             salt,
@@ -159,12 +160,9 @@ impl Connection {
                 request_id
             };
 
-            // create a guard reference to the request handle
-            // and defer removing of it until all references are dead.
+            // create a guard to the request handle and defer it's removing
             // so if the future will be canceled request handle will be cleaned too
-            // https://docs.rs/sharded-slab/0.1.4/sharded_slab/struct.OwnedEntry.html
-            let _guard = self.pending_requests.clone().get_owned(request_id);
-            self.pending_requests.remove(request_id);
+            let _guard = SlabEntryGuard::new(request_id, &self.pending_requests);
 
             let req = f(request_id);
             let req_buffer_key = self.write_req_to_buf(&req).unwrap();
@@ -276,7 +274,7 @@ impl Connection {
 
             let header = response::ResponseHeader::decode(&mut resp_reader).unwrap();
 
-            if let Some(req) =  self.pending_requests.take(header.request_id()) {
+            if let Some(req) = self.pending_requests.take(header.request_id()) {
                 let position = resp_reader.position();
                 let result = Ok(TarantoolResp {
                     header,
