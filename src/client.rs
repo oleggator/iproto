@@ -258,13 +258,10 @@ impl Connection {
                 + ((payload_len_raw[3] as usize) << 8)
                 + (payload_len_raw[4] as usize);
 
-            /*
-                TODO: fix buffer leak in the case when receiver future canceled
-            */
             let mut resp_buf = self.buffer_pool.clone().create_owned().unwrap();
-            let buffer_key = resp_buf.key();
             // defer buffer clear
-            self.buffer_pool.clear(buffer_key);
+            // so buffer will be cleared when resp_buf will drop
+            self.buffer_pool.clear(resp_buf.key());
 
             resp_buf.resize(len, 0);
             read_stream.read_exact(&mut resp_buf).await?;
