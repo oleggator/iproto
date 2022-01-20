@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use crate::iproto::{consts, request, response};
 use response::ResponseBody;
+use crate::utils::PoolEntryBox;
 
 const READ_BUFFER: usize = 128 * 1024;
 const WRITE_BUFFER: usize = 128 * 1024;
@@ -43,7 +44,7 @@ struct TarantoolResp {
 
 #[derive(Debug)]
 struct CursorRef {
-    buffer_key: usize,
+    buffer_guard: PoolEntryBox<Buffer>,
     position: u64,
 }
 
@@ -54,7 +55,7 @@ struct RequestHandle {
 
 pub struct Connection {
     state: AtomicU8,
-    requests_to_process_tx: mpsc::Sender<usize>,
+    requests_to_process_tx: mpsc::Sender<PoolEntryBox<Buffer>>,
 
     pending_requests: Slab<RequestHandle>,
     requests_not_full_notify: Notify,
@@ -120,7 +121,7 @@ impl Connection {
         Ok(conn)
     }
 
-    fn write_req_to_buf<R>(&self, req: &R) -> Result<usize, rmp_serde::encode::Error>
+    fn write_req_to_buf<R>(&self, req: &R) -> Result<PoolEntryBox<Buffer>, rmp_serde::encode::Error>
         where R: request::Request<Buffer>,
     {
         let mut write_buf = self.buffer_pool.create().unwrap();
@@ -136,7 +137,7 @@ impl Connection {
         write_buf[3] = (body_len >> 8) as u8;
         write_buf[4] = body_len as u8;
 
-        Ok(write_buf.key())
+        Ok(PoolEntryBox::new(write_buf.key(), self.buffer_pool.clone()))
     }
 
     pub async fn make_request<Req, Resp, F>(&self, f: F) -> Result<Resp, Error>
@@ -163,10 +164,11 @@ impl Connection {
 
         let TarantoolResp {
             header: response::ResponseHeader { response_code_indicator, .. },
-            cursor_ref: CursorRef { buffer_key, position },
+            cursor_ref: CursorRef { buffer_guard, position },
         } = rx.await.unwrap();
 
-        let buffer = self.buffer_pool.get(buffer_key).unwrap();
+        // let buffer = self.buffer_pool.get(buffer_guard.idx).unwrap();
+        let buffer = buffer_guard.get().unwrap();
         let mut cursor: Cursor<&Buffer> = Cursor::new(buffer.as_ref());
         cursor.set_position(position);
 
@@ -183,7 +185,6 @@ impl Connection {
             }
             _ => { panic!("error") }
         };
-        self.buffer_pool.clear(buffer_key);
 
         result
     }
@@ -206,26 +207,26 @@ impl Connection {
         Ok(())
     }
 
-    async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<usize>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
+    async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<PoolEntryBox<Buffer>>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
 
         let mut write_stream = BufWriter::with_capacity(WRITE_BUFFER, write_stream);
 
         while self.state.load(Ordering::Relaxed) == CONNECTED_STATE {
-            let buffer_key = requests_to_process_rx.recv().await.unwrap();
             {
-                let mut write_buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
+                let buffer_guard = requests_to_process_rx.recv().await.unwrap();
+                let mut write_buf = buffer_guard.get_owned().unwrap();
+                // let mut write_buf = self.buffer_pool.clone().get_owned(buffer_guard.idx).unwrap();
                 write_stream.write_all(&mut write_buf).await?;
-                self.buffer_pool.clear(buffer_key);
             }
 
             // TODO: change batching behaviour
             const OPTIMAL_PAYLOAD_SIZE: usize = 1000;
             while write_stream.buffer().len() < OPTIMAL_PAYLOAD_SIZE {
-                if let Ok(buffer_key) = requests_to_process_rx.try_recv() {
-                    let mut write_buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
+                if let Ok(buffer_guard) = requests_to_process_rx.try_recv() {
+                    let mut write_buf = buffer_guard.get_owned().unwrap();
+                    // let mut write_buf = self.buffer_pool.clone().get_owned(buffer_guard.idx).unwrap();
                     write_stream.write_all(&mut write_buf).await?;
-                    self.buffer_pool.clear(buffer_key);
                 } else {
                     break;
                 }
@@ -269,7 +270,7 @@ impl Connection {
             let result = TarantoolResp {
                 header,
                 cursor_ref: CursorRef {
-                    buffer_key,
+                    buffer_guard: PoolEntryBox::new(buffer_key, self.buffer_pool.clone()),
                     position: resp_reader.position(),
                 },
             };
