@@ -4,7 +4,7 @@ use sharded_slab::pool::{OwnedRef, Ref};
 
 #[derive(Debug)]
 pub(crate) struct PoolEntryBox<T: Default + Clear> {
-    pub(crate) idx: usize,
+    idx: usize,
     pool: Arc<Pool<T>>,
 }
 

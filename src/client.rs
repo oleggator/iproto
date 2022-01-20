@@ -167,13 +167,12 @@ impl Connection {
             cursor_ref: CursorRef { buffer_guard, position },
         } = rx.await.unwrap();
 
-        // let buffer = self.buffer_pool.get(buffer_guard.idx).unwrap();
         let buffer = buffer_guard.get().unwrap();
         let mut cursor: Cursor<&Buffer> = Cursor::new(buffer.as_ref());
         cursor.set_position(position);
 
         const IPROTO_OK: u32 = consts::IPROTO_OK as u32;
-        let result = match response_code_indicator {
+        match response_code_indicator {
             IPROTO_OK => {
                 let data_resp = Resp::decode(&mut cursor).unwrap();
                 Ok(data_resp)
@@ -184,9 +183,7 @@ impl Connection {
                 Err(Error::TarantoolError(err_resp))
             }
             _ => { panic!("error") }
-        };
-
-        result
+        }
     }
 
     pub async fn call<T, R>(&self, name: &str, data: &T) -> Result<R, Error>
@@ -216,7 +213,6 @@ impl Connection {
             {
                 let buffer_guard = requests_to_process_rx.recv().await.unwrap();
                 let mut write_buf = buffer_guard.get_owned().unwrap();
-                // let mut write_buf = self.buffer_pool.clone().get_owned(buffer_guard.idx).unwrap();
                 write_stream.write_all(&mut write_buf).await?;
             }
 
@@ -225,7 +221,6 @@ impl Connection {
             while write_stream.buffer().len() < OPTIMAL_PAYLOAD_SIZE {
                 if let Ok(buffer_guard) = requests_to_process_rx.try_recv() {
                     let mut write_buf = buffer_guard.get_owned().unwrap();
-                    // let mut write_buf = self.buffer_pool.clone().get_owned(buffer_guard.idx).unwrap();
                     write_stream.write_all(&mut write_buf).await?;
                 } else {
                     break;
