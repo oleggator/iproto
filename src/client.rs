@@ -36,17 +36,17 @@ pub enum Error {
 }
 
 #[derive(Debug)]
-pub struct TarantoolResp {
-    pub header: response::ResponseHeader,
-    pub cursor_ref: CursorRef,
+struct TarantoolResp {
+    header: response::ResponseHeader,
+    cursor_ref: CursorRef,
 }
 
-pub type TarantoolResult = Result<TarantoolResp, Error>;
+type TarantoolResult = Result<TarantoolResp, Error>;
 
 #[derive(Debug)]
-pub struct CursorRef {
-    pub buffer_key: usize,
-    pub position: u64,
+struct CursorRef {
+    buffer_key: usize,
+    position: u64,
 }
 
 struct RequestHandle {
