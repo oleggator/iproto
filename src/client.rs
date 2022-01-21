@@ -145,26 +145,28 @@ impl Connection {
             Resp: response::ResponseBody,
             F: FnOnce(usize) -> Req,
     {
-        let (tx, rx) = oneshot::channel();
-        let request_id = {
-            /* TODO
-                request must drop inside this function
-                otherwise memory leak may be occurred in the case of read or decode error
-            */
-            let entry = self.pending_requests.vacant_entry().unwrap();
-            let request_id = entry.key();
-            entry.insert(RequestHandle { request_id, tx });
-            request_id
-        };
-
-        let req = f(request_id);
-        let buffer_key = self.write_req_to_buf(&req).unwrap();
-        self.requests_to_process_tx.send(buffer_key).await.unwrap();
-
         let TarantoolResp {
             header: response::ResponseHeader { response_code_indicator, .. },
             cursor_ref: CursorRef { buffer_key, position },
-        } = rx.await.unwrap();
+        } = {
+            let (tx, rx) = oneshot::channel();
+            let request_id = {
+                /* TODO
+                    request must drop inside this function
+                    otherwise memory leak may be occurred in the case of read or decode error
+                */
+                let entry = self.pending_requests.vacant_entry().unwrap();
+                let request_id = entry.key();
+                entry.insert(RequestHandle { request_id, tx });
+                request_id
+            };
+
+            let req = f(request_id);
+            let buffer_key = self.write_req_to_buf(&req).unwrap();
+            self.requests_to_process_tx.send(buffer_key).await.unwrap();
+
+            rx.await.unwrap()
+        };
 
         let buffer = self.buffer_pool.get(buffer_key).unwrap();
         let mut cursor: Cursor<&Buffer> = Cursor::new(buffer.as_ref());
