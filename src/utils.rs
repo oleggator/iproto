@@ -2,13 +2,13 @@ use std::sync::Arc;
 use sharded_slab::{Clear, Pool, Slab};
 use sharded_slab::pool::{OwnedRef, Ref};
 
-// PoolEntryGuard ensures that pool entry will be cleared after guard drops
+/// PoolEntryGuard ensures that pool entry will be cleared after guard drops
 #[derive(Debug)]
 pub(crate) struct PoolEntryGuard<T: Default + Clear> {
-    // entry id to remove
+    /// entry id to remove
     idx: usize,
 
-    // slab to clear from
+    /// slab to clear from
     pool: Arc<Pool<T>>,
 }
 
@@ -33,12 +33,12 @@ impl<T: Default + Clear> Drop for PoolEntryGuard<T> {
 }
 
 
-// SlabEntryGuard ensures that slab entry will be deleted after guard drops
+/// SlabEntryGuard ensures that slab entry will be deleted after guard drops
 pub(crate) struct SlabEntryGuard<'a, T> {
-    // entry id to remove
+    /// entry id to remove
     idx: usize,
 
-    // slab to remove from
+    /// slab to remove from
     slab: &'a Slab<T>,
 }
 

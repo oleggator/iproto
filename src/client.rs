@@ -152,10 +152,6 @@ impl Connection {
         } = {
             let (tx, rx) = oneshot::channel();
             let request_id = {
-                /* TODO
-                    request must drop inside this function
-                    otherwise memory leak may be occurred in the case of read or decode error
-                */
                 let entry = self.pending_requests.vacant_entry().unwrap();
                 let request_id = entry.key();
                 entry.insert(RequestHandle { request_id, tx });
@@ -256,7 +252,8 @@ impl Connection {
                 + (payload_len_raw[4] as usize);
 
             let mut resp_buf = self.buffer_pool.clone().create_owned().unwrap();
-            let buffer_key = resp_buf.key();
+            let buffer_guard = PoolEntryGuard::new(resp_buf.key(), self.buffer_pool.clone());
+
             resp_buf.resize(len, 0);
             read_stream.read_exact(&mut resp_buf).await?;
 
@@ -269,7 +266,7 @@ impl Connection {
             let result = TarantoolResp {
                 header,
                 cursor_ref: CursorRef {
-                    buffer_guard: PoolEntryGuard::new(buffer_key, self.buffer_pool.clone()),
+                    buffer_guard,
                     position: resp_reader.position(),
                 },
             };
