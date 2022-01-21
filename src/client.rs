@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use crate::iproto::{consts, request, response};
 use response::ResponseBody;
-use crate::utils::PoolEntryBox;
+use crate::utils::{PoolEntryBox, SlabEntryGuard};
 
 const READ_BUFFER: usize = 128 * 1024;
 const WRITE_BUFFER: usize = 128 * 1024;
@@ -161,6 +161,8 @@ impl Connection {
                 entry.insert(RequestHandle { request_id, tx });
                 request_id
             };
+
+            let _guard = SlabEntryGuard::new(request_id, &self.pending_requests);
 
             let req = f(request_id);
             let buffer_key = self.write_req_to_buf(&req).unwrap();
