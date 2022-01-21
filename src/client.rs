@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use crate::iproto::{consts, request, response};
 use response::ResponseBody;
-use crate::utils::{PoolEntryBox, SlabEntryGuard};
+use crate::utils::{PoolEntryGuard, SlabEntryGuard};
 
 const READ_BUFFER: usize = 128 * 1024;
 const WRITE_BUFFER: usize = 128 * 1024;
@@ -44,7 +44,7 @@ struct TarantoolResp {
 
 #[derive(Debug)]
 struct CursorRef {
-    buffer_guard: PoolEntryBox<Buffer>,
+    buffer_guard: PoolEntryGuard<Buffer>,
     position: u64,
 }
 
@@ -55,7 +55,7 @@ struct RequestHandle {
 
 pub struct Connection {
     state: AtomicU8,
-    requests_to_process_tx: mpsc::Sender<PoolEntryBox<Buffer>>,
+    requests_to_process_tx: mpsc::Sender<PoolEntryGuard<Buffer>>,
 
     pending_requests: Slab<RequestHandle>,
     requests_not_full_notify: Notify,
@@ -121,7 +121,7 @@ impl Connection {
         Ok(conn)
     }
 
-    fn write_req_to_buf<R>(&self, req: &R) -> Result<PoolEntryBox<Buffer>, rmp_serde::encode::Error>
+    fn write_req_to_buf<R>(&self, req: &R) -> Result<PoolEntryGuard<Buffer>, rmp_serde::encode::Error>
         where R: request::Request<Buffer>,
     {
         let mut write_buf = self.buffer_pool.create().unwrap();
@@ -137,7 +137,7 @@ impl Connection {
         write_buf[3] = (body_len >> 8) as u8;
         write_buf[4] = body_len as u8;
 
-        Ok(PoolEntryBox::new(write_buf.key(), self.buffer_pool.clone()))
+        Ok(PoolEntryGuard::new(write_buf.key(), self.buffer_pool.clone()))
     }
 
     pub async fn make_request<Req, Resp, F>(&self, f: F) -> Result<Resp, Error>
@@ -208,7 +208,7 @@ impl Connection {
         Ok(())
     }
 
-    async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<PoolEntryBox<Buffer>>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
+    async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<PoolEntryGuard<Buffer>>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
 
         let mut write_stream = BufWriter::with_capacity(WRITE_BUFFER, write_stream);
@@ -269,7 +269,7 @@ impl Connection {
             let result = TarantoolResp {
                 header,
                 cursor_ref: CursorRef {
-                    buffer_guard: PoolEntryBox::new(buffer_key, self.buffer_pool.clone()),
+                    buffer_guard: PoolEntryGuard::new(buffer_key, self.buffer_pool.clone()),
                     position: resp_reader.position(),
                 },
             };

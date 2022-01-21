@@ -2,13 +2,17 @@ use std::sync::Arc;
 use sharded_slab::{Clear, Pool, Slab};
 use sharded_slab::pool::{OwnedRef, Ref};
 
+// PoolEntryGuard ensures that pool entry will be cleared after guard drops
 #[derive(Debug)]
-pub(crate) struct PoolEntryBox<T: Default + Clear> {
+pub(crate) struct PoolEntryGuard<T: Default + Clear> {
+    // entry id to remove
     idx: usize,
+
+    // slab to clear from
     pool: Arc<Pool<T>>,
 }
 
-impl<T: Default + Clear> PoolEntryBox<T> {
+impl<T: Default + Clear> PoolEntryGuard<T> {
     pub fn new(idx: usize, pool: Arc<Pool<T>>) -> Self {
         Self { idx, pool }
     }
@@ -22,7 +26,7 @@ impl<T: Default + Clear> PoolEntryBox<T> {
     }
 }
 
-impl<T: Default + Clear> Drop for PoolEntryBox<T> {
+impl<T: Default + Clear> Drop for PoolEntryGuard<T> {
     fn drop(&mut self) {
         self.pool.clear(self.idx);
     }
