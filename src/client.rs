@@ -39,25 +39,16 @@ pub enum Error {
 #[derive(Debug)]
 struct TarantoolResp {
     header: response::ResponseHeader,
-    cursor_ref: CursorRef,
-}
 
-#[derive(Debug)]
-struct CursorRef {
     buffer_guard: PoolEntryGuard<Buffer>,
-    position: u64,
-}
-
-struct RequestHandle {
-    request_id: usize,
-    tx: oneshot::Sender<TarantoolResp>,
+    body_offset: u64,
 }
 
 pub struct Connection {
     state: AtomicU8,
     requests_to_process_tx: mpsc::Sender<PoolEntryGuard<Buffer>>,
 
-    pending_requests: Slab<RequestHandle>,
+    pending_requests: Slab<oneshot::Sender<TarantoolResp>>,
     requests_not_full_notify: Notify,
 
     buffer_pool: Arc<Pool<Buffer>>,
@@ -148,13 +139,13 @@ impl Connection {
     {
         let TarantoolResp {
             header: response::ResponseHeader { response_code_indicator, .. },
-            cursor_ref: CursorRef { buffer_guard, position },
+            buffer_guard, body_offset: position,
         } = {
             let (tx, rx) = oneshot::channel();
             let request_id = {
                 let entry = self.pending_requests.vacant_entry().unwrap();
                 let request_id = entry.key();
-                entry.insert(RequestHandle { request_id, tx });
+                entry.insert(tx);
                 request_id
             };
 
@@ -265,18 +256,16 @@ impl Connection {
 
             let result = TarantoolResp {
                 header,
-                cursor_ref: CursorRef {
-                    buffer_guard,
-                    position: resp_reader.position(),
-                },
+                buffer_guard,
+                body_offset: resp_reader.position(),
             };
 
             // resp_buf must be dropped before it was sent to prevent mutual access by receiver
             // (if receivers gets the key before it was dropped it receives null)
             drop(resp_buf);
 
-            let req = self.pending_requests.take(request_id).unwrap();
-            req.tx.send(result).unwrap();
+            let req_handle = self.pending_requests.take(request_id).unwrap();
+            req_handle.send(result).unwrap();
         }
 
         Ok(())
