@@ -4,4 +4,10 @@
 .DS_Store
 *.xlog
 *.snap
-bench/tarantool/cmake-build-*
+cmake-build-*
+CMakeFiles
+*.cmake
+bench/tarantool/CMakeCache.txt
+bench/tarantool/Makefile
+*.so
+*.dylib
