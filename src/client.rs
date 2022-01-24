@@ -41,8 +41,6 @@ struct TarantoolResp {
     cursor_ref: CursorRef,
 }
 
-type TarantoolResult = Result<TarantoolResp, Error>;
-
 #[derive(Debug)]
 struct CursorRef {
     buffer_key: usize,
@@ -51,7 +49,7 @@ struct CursorRef {
 
 struct RequestHandle {
     request_id: usize,
-    tx: oneshot::Sender<TarantoolResult>,
+    tx: oneshot::Sender<TarantoolResp>,
 }
 
 pub struct Connection {
@@ -166,7 +164,7 @@ impl Connection {
         let TarantoolResp {
             header: response::ResponseHeader { response_code_indicator, .. },
             cursor_ref: CursorRef { buffer_key, position },
-        } = rx.await.unwrap().unwrap();
+        } = rx.await.unwrap();
 
         let buffer = self.buffer_pool.get(buffer_key).unwrap();
         let mut cursor: Cursor<&Buffer> = Cursor::new(buffer.as_ref());
@@ -268,13 +266,13 @@ impl Connection {
             let header = response::ResponseHeader::decode(&mut resp_reader).unwrap();
             let request_id = header.request_id();
 
-            let result = Ok(TarantoolResp {
+            let result = TarantoolResp {
                 header,
                 cursor_ref: CursorRef {
                     buffer_key,
                     position: resp_reader.position(),
                 },
-            });
+            };
 
             // resp_buf must be dropped before it was sent to prevent mutual access by receiver
             // (if receivers gets the key before it was dropped it receives null)
