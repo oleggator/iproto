@@ -1,7 +1,6 @@
 use std::io;
 use iproto::client::Connection;
 use futures::future::join_all;
-// use hdrhistogram::{sync::SyncHistogram, Histogram};
 use tokio::time::Instant;
 
 #[cfg(not(target_env = "msvc"))]
@@ -14,27 +13,29 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 #[cfg(target_os = "macos")]
 fn main() -> io::Result<()> {
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(test())
+    let calc_latency = std::env::args().find(|item| item == "--latency").is_some();
+    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    rt.block_on(test(calc_latency))
 }
 
 #[cfg(target_os = "linux")]
 fn main() -> io::Result<()> {
+    let calc_latency = std::env::args().find(|item| item == "--latency").is_some();
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "--io_uring" {
         println!("io_uring");
-        tokio_uring::start(test())
+        tokio_uring::start(test(calc_latency))
     } else {
         println!("epoll");
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        rt.block_on(test())
+        rt.block_on(test(calc_latency))
     }
 }
 
-async fn test() -> io::Result<()> {
+async fn test(calc_latency: bool) -> io::Result<()> {
     let conn = Connection::connect("localhost:3301").await.unwrap();
 
-    let iterations = 5_000_000;
+    let iterations = 10_000_000;
 
     // let worker_n = 512;
     let worker_n = 2048;
@@ -42,37 +43,64 @@ async fn test() -> io::Result<()> {
     let iterations_per_worker = iterations / worker_n;
     let mut workers = Vec::new();
 
-    // let mut histogram: SyncHistogram<_> = Histogram::<u64>::new(5).unwrap().into();
-
     let begin = Instant::now();
-    for i in 0..worker_n {
-        // let mut recorder = histogram.recorder();
+    for _ in 0..worker_n {
         let conn = conn.clone();
 
         let worker = tokio::spawn(async move {
-            for _ in i * iterations_per_worker..(i + 1) * iterations_per_worker {
-                // let begin = Instant::now();
+            let mut latencies: Vec<u32> = vec![0; iterations_per_worker];
+
+            for j in 0..iterations_per_worker {
+                let begin = calc_latency.then(Instant::now);
 
                 let ((res, ), ): ((usize, ), ) = conn.call("csum", &(1, 2)).await.unwrap();
                 assert_eq!(res, 3);
 
-                // recorder.record(begin.elapsed().as_nanos() as u64).unwrap();
+                if let Some(begin) = begin {
+                    latencies[j] = begin.elapsed().as_micros() as u32;
+                }
             }
+
+            latencies
         });
         workers.push(worker);
     }
-    join_all(workers).await;
+    let result = join_all(workers).await;
 
     let elapsed = begin.elapsed();
-    // histogram.refresh();
-
     println!("rps: {}", ((iterations as f64) / elapsed.as_secs_f64()) as u64);
-    // println!("p50: {}", histogram.value_at_quantile(0.50));
-    // println!("p90: {}", histogram.value_at_quantile(0.90));
-    // println!("p99: {}", histogram.value_at_quantile(0.99));
-    // println!("min: {}", histogram.min());
-    // println!("max: {}", histogram.max());
-    // println!("mean: {}", histogram.mean() as u64);
+
+    if calc_latency {
+        println!();
+        let mut latencies: Vec<u32> = result
+            .into_iter()
+            .map(|result| result.unwrap())
+            .flatten()
+            .collect();
+        latencies.sort_unstable();
+
+        for percentile in [0.50, 0.90, 0.99, 0.999] {
+            println!("{:8} {:.3} ms", format!("p{}:", percentile), latencies.percentile(percentile) as f64 / 1_000.);
+        }
+
+        println!("\nmin:   {:.3} ms", latencies.percentile(0.) as f64 / 1_000.);
+        println!("max:   {:.3} ms", latencies.percentile(1.) as f64 / 1_000.);
+        println!("mean:  {:.3} ms", {
+            let sum = latencies.iter().fold(0u64, |acc, item| acc + *item as u64);
+            sum as f64 / latencies.len() as f64
+        } / 1_000.);
+    }
 
     Ok(())
+}
+
+trait Percentile<T: Copy> {
+    fn percentile(&self, pct: f64) -> T;
+}
+
+impl<T: Copy> Percentile<T> for Vec<T> {
+    fn percentile(&self, pct: f64) -> T {
+        let pos = (pct * (self.len() - 1) as f64) as usize;
+        self[pos]
+    }
 }
