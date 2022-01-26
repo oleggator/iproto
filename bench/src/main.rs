@@ -36,9 +36,7 @@ async fn test(calc_latency: bool) -> io::Result<()> {
     let conn = Connection::connect("localhost:3301").await.unwrap();
 
     let iterations = 10_000_000;
-
-    // let worker_n = 512;
-    let worker_n = 2048;
+    let worker_n = 512;
 
     let iterations_per_worker = iterations / worker_n;
     let mut workers = Vec::new();
