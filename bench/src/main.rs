@@ -27,7 +27,10 @@ fn main() -> io::Result<()> {
         tokio_uring::start(test(calc_latency))
     } else {
         println!("epoll");
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(4)
+            .build()?;
         rt.block_on(test(calc_latency))
     }
 }
