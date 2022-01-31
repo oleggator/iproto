@@ -13,16 +13,31 @@ static GLOBAL: Jemalloc = Jemalloc;
 
 #[cfg(target_os = "macos")]
 fn main() -> io::Result<()> {
-    let calc_latency = std::env::args().find(|item| item == "--latency").is_some();
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let calc_latency = std::env::args().any(|item| item == "--latency");
+    let single_thread = std::env::args().any(|item| item == "--single");
+
+    let rt = if single_thread {
+        tokio::runtime::Builder::new_current_thread()
+    } else {
+        tokio::runtime::Builder::new_multi_thread()
+    }.enable_all().build()?;
     rt.block_on(test(calc_latency))
 }
 
 #[cfg(target_os = "linux")]
 fn main() -> io::Result<()> {
-    let calc_latency = std::env::args().find(|item| item == "--latency").is_some();
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 && args[1] == "--io_uring" {
+    let calc_latency = std::env::args().any(|item| item == "--latency");
+    let single_thread = std::env::args().any(|item| item == "--single");
+    let io_uring = std::env::args().any(|item| item == "--io_uring");
+
+    if single_thread {
+        println!("epoll single-thread");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .worker_threads(4)
+            .build()?;
+        rt.block_on(test(calc_latency))
+    } else if io_uring {
         println!("io_uring");
         tokio_uring::start(test(calc_latency))
     } else {
