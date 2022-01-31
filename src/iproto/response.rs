@@ -96,20 +96,20 @@ impl<D: DeserializeOwned> ResponseBody for CallResponse<D> {
 
 #[derive(Debug)]
 pub struct ErrorExtra {
-    error_type: String,
-    error_file: String,
-    error_line: u64,
-    error_message: String,
-    errno: u64,
-    errcode: u64,
-    error_fields: Option<HashMap<String, rmpv::Value>>,
+    pub error_type: String,
+    pub error_file: String,
+    pub error_line: u64,
+    pub error_message: String,
+    pub errno: u64,
+    pub errcode: u64,
+    pub error_fields: Option<HashMap<String, rmpv::Value>>,
 }
 
 
 #[derive(Debug)]
 pub struct ErrorResponse {
-    error: String,
-    error_extra: Option<ErrorExtra>,
+    pub error: String,
+    pub error_extra: Option<ErrorExtra>,
 }
 
 impl ResponseBody for ErrorResponse {
