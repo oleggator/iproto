@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use crate::iproto::{consts, request, response};
 use response::ResponseBody;
+use crate::utils::SlabEntryGuard;
 
 const READ_BUFFER: usize = 128 * 1024;
 const WRITE_BUFFER: usize = 128 * 1024;
@@ -151,15 +152,13 @@ impl Connection {
         } = {
             let (tx, rx) = oneshot::channel();
             let request_id = {
-                /* TODO
-                    request must drop inside this function
-                    otherwise memory leak may be occurred in the case of read or decode error
-                */
                 let entry = self.pending_requests.vacant_entry().unwrap();
                 let request_id = entry.key();
                 entry.insert(RequestHandle { request_id, tx });
                 request_id
             };
+
+            let _guard = SlabEntryGuard::new(request_id, &self.pending_requests);
 
             let req = f(request_id);
             let buffer_key = self.write_req_to_buf(&req).unwrap();
