@@ -10,8 +10,8 @@ description = "Tarantool iproto protocol implementation"
 
 [dependencies]
 tokio = { version = "1", features = [
-    "rt", "net", "sync", "io-util", "time",
-    "test-util", "macros", "parking_lot",
+    "rt", "net", "io-util", "time", "tracing",
+    "test-util", "macros", "parking_lot", "sync"
 ] }
 rmp-serde = "0.15"
 serde = "1.0"
