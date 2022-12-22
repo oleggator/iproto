@@ -1,0 +1,33 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write      # to deploy to Pages
+      id-token: write   # to verify the deployment originates from an appropriate source
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose
+    - name: Build docs
+      run: cargo doc --no-deps
+    - name: Upload GitHub Pages artifact
+      uses: actions/upload-pages-artifact@v1.0.7
+      with:
+        path: target/doc
+    - name: Deploy GitHub Pages site
+      uses: actions/deploy-pages@v1.2.3
+    # - name: Run tests
+    #   run: cargo test --verbose
