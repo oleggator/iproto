@@ -100,14 +100,16 @@ impl Connection {
             .name("writer")
             .spawn(async move {
                 writer_conn.writer(requests_to_process_rx, write_stream).await
-            });
+            })
+            .unwrap();
 
         let reader_conn = conn.clone();
         let reader_task = tokio::task::Builder::new()
             .name("reader")
             .spawn(async move {
                 reader_conn.reader(read_stream).await
-            });
+            })
+            .unwrap();
 
         tokio::task::Builder::new()
             .name("iproto error catcher")
