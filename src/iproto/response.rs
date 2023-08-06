@@ -85,7 +85,7 @@ impl<D: DeserializeOwned> ResponseBody for CallResponse<D> {
                     data = Some(rmp_serde::decode::from_read(reader.by_ref())?);
                 }
                 _ => {
-                    let _: () = rmp_serde::decode::from_read(reader.by_ref())?;
+                    rmp_serde::decode::from_read(reader.by_ref())?;
                     panic!("invalid op");
                 }
             }
@@ -189,7 +189,7 @@ impl ResponseBody for ErrorResponse {
                     });
                 }
                 _ => {
-                    let _: () = decode::from_read(reader.by_ref())?;
+                    decode::from_read(reader.by_ref())?;
                     panic!("invalid op");
                 }
             }

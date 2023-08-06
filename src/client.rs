@@ -108,14 +108,12 @@ impl Connection {
                 writer_conn
                     .writer(requests_to_process_rx, write_stream)
                     .await
-            })
-            .unwrap();
+            })?;
 
         let reader_conn = conn.clone();
         let reader_task = tokio::task::Builder::new()
             .name("reader")
-            .spawn(async move { reader_conn.reader(read_stream).await })
-            .unwrap();
+            .spawn(async move { reader_conn.reader(read_stream).await })?;
 
         tokio::task::Builder::new()
             .name("iproto error catcher")
@@ -124,7 +122,7 @@ impl Connection {
                     Ok(_) => {}
                     Err(_) => {}
                 }
-            });
+            })?;
 
         Ok(conn)
     }
@@ -240,8 +238,8 @@ impl Connection {
         while self.state.load(Ordering::Relaxed) == CONNECTED_STATE {
             let buffer_key = requests_to_process_rx.recv().await.unwrap();
             {
-                let mut write_buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
-                write_stream.write_all(&mut write_buf).await?;
+                let write_buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
+                write_stream.write_all(&write_buf).await?;
                 self.buffer_pool.clear(buffer_key);
             }
 
@@ -249,8 +247,8 @@ impl Connection {
             const OPTIMAL_PAYLOAD_SIZE: usize = 1000;
             while write_stream.buffer().len() < OPTIMAL_PAYLOAD_SIZE {
                 if let Ok(buffer_key) = requests_to_process_rx.try_recv() {
-                    let mut write_buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
-                    write_stream.write_all(&mut write_buf).await?;
+                    let write_buf = self.buffer_pool.clone().get_owned(buffer_key).unwrap();
+                    write_stream.write_all(&write_buf).await?;
                     self.buffer_pool.clear(buffer_key);
                 } else {
                     break;
