@@ -138,7 +138,7 @@ impl Connection {
 
         req.encode(write_buf.as_mut())?;
 
-        let body_len = write_buf.len() - 5;
+        let body_len = write_buf.len() as u32 - 5;
         write_buf[1] = (body_len >> 24) as u8;
         write_buf[2] = (body_len >> 16) as u8;
         write_buf[3] = (body_len >> 8) as u8;
