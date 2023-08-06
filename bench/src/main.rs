@@ -34,7 +34,6 @@ fn main() -> io::Result<()> {
         println!("epoll single-thread");
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
-            .worker_threads(4)
             .build()?;
         rt.block_on(test(calc_latency))
     } else if io_uring {
