@@ -241,7 +241,7 @@ pub const ER_INVALID_XLOG_ORDER: u8 = 76;
 pub const ER_NO_CONNECTION: u8 = 77;
 // Timeout exceeded
 pub const ER_TIMEOUT: u8 = 78;
-// Operation is not permitted when there is an active transaction 
+// Operation is not permitted when there is an active transaction
 pub const ER_ACTIVE_TRANSACTION: u8 = 79;
 // The transaction the cursor belongs to has ended
 pub const ER_CURSOR_NO_TRANSACTION: u8 = 80;

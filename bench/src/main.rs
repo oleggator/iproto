@@ -1,6 +1,6 @@
-use std::io;
-use iproto::client::Connection;
 use futures::future::join_all;
+use iproto::client::Connection;
+use std::io;
 use tokio::time::Instant;
 
 #[cfg(not(target_env = "msvc"))]
@@ -9,7 +9,6 @@ use tikv_jemallocator::Jemalloc;
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
-
 
 #[cfg(target_os = "macos")]
 fn main() -> io::Result<()> {
@@ -20,7 +19,9 @@ fn main() -> io::Result<()> {
         tokio::runtime::Builder::new_current_thread()
     } else {
         tokio::runtime::Builder::new_multi_thread()
-    }.enable_all().build()?;
+    }
+    .enable_all()
+    .build()?;
     rt.block_on(test(calc_latency))
 }
 
@@ -68,7 +69,7 @@ async fn test(calc_latency: bool) -> io::Result<()> {
             for j in 0..iterations_per_worker {
                 let begin = calc_latency.then(Instant::now);
 
-                let ((res, ), ): ((usize, ), ) = conn.call("csum", &(1, 2)).await.unwrap();
+                let ((res,),): ((usize,),) = conn.call("csum", &(1, 2)).await.unwrap();
                 assert_eq!(res, 3);
 
                 if let Some(begin) = begin {
@@ -83,7 +84,10 @@ async fn test(calc_latency: bool) -> io::Result<()> {
     let result = join_all(workers).await;
 
     let elapsed = begin.elapsed();
-    println!("rps: {}", ((iterations as f64) / elapsed.as_secs_f64()) as u64);
+    println!(
+        "rps: {}",
+        ((iterations as f64) / elapsed.as_secs_f64()) as u64
+    );
 
     if calc_latency {
         println!();
@@ -95,15 +99,25 @@ async fn test(calc_latency: bool) -> io::Result<()> {
         latencies.sort_unstable();
 
         for percentile in [0.50, 0.90, 0.99, 0.999] {
-            println!("{:8} {:.3} ms", format!("p{}:", percentile), latencies.percentile(percentile) as f64 / 1_000.);
+            println!(
+                "{:8} {:.3} ms",
+                format!("p{}:", percentile),
+                latencies.percentile(percentile) as f64 / 1_000.
+            );
         }
 
-        println!("\nmin:   {:.3} ms", latencies.percentile(0.) as f64 / 1_000.);
+        println!(
+            "\nmin:   {:.3} ms",
+            latencies.percentile(0.) as f64 / 1_000.
+        );
         println!("max:   {:.3} ms", latencies.percentile(1.) as f64 / 1_000.);
-        println!("mean:  {:.3} ms", {
-            let sum = latencies.iter().fold(0u64, |acc, item| acc + *item as u64);
-            sum as f64 / latencies.len() as f64
-        } / 1_000.);
+        println!(
+            "mean:  {:.3} ms",
+            {
+                let sum = latencies.iter().fold(0u64, |acc, item| acc + *item as u64);
+                sum as f64 / latencies.len() as f64
+            } / 1_000.
+        );
     }
 
     Ok(())

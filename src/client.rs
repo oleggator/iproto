@@ -1,20 +1,26 @@
 use std::io::Cursor;
 use std::os::unix::io::AsRawFd;
-use std::sync::{Arc, atomic::{AtomicU8, Ordering}};
+use std::sync::{
+    atomic::{AtomicU8, Ordering},
+    Arc,
+};
 
-use sharded_slab::{Pool, Slab};
-use serde::Serialize;
-use tokio::sync::{mpsc, oneshot, Notify};
-use tokio::net::{TcpStream, ToSocketAddrs, tcp::{OwnedWriteHalf, OwnedReadHalf}};
-use serde::de::DeserializeOwned;
-use tokio::io::{BufReader, BufWriter};
 use futures::future::try_join;
 use nix::sys::socket;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+use sharded_slab::{Pool, Slab};
 use thiserror::Error;
+use tokio::io::{BufReader, BufWriter};
+use tokio::net::{
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
+    TcpStream, ToSocketAddrs,
+};
+use tokio::sync::{mpsc, oneshot, Notify};
 
 use crate::iproto::{consts, request, response};
-use response::ResponseBody;
 use crate::utils::SlabEntryGuard;
+use response::ResponseBody;
 
 const READ_BUFFER: usize = 128 * 1024;
 const WRITE_BUFFER: usize = 128 * 1024;
@@ -99,16 +105,16 @@ impl Connection {
         let writer_task = tokio::task::Builder::new()
             .name("writer")
             .spawn(async move {
-                writer_conn.writer(requests_to_process_rx, write_stream).await
+                writer_conn
+                    .writer(requests_to_process_rx, write_stream)
+                    .await
             })
             .unwrap();
 
         let reader_conn = conn.clone();
         let reader_task = tokio::task::Builder::new()
             .name("reader")
-            .spawn(async move {
-                reader_conn.reader(read_stream).await
-            })
+            .spawn(async move { reader_conn.reader(read_stream).await })
             .unwrap();
 
         tokio::task::Builder::new()
@@ -124,7 +130,8 @@ impl Connection {
     }
 
     fn write_req_to_buf<R>(&self, req: &R) -> Result<usize, rmp_serde::encode::Error>
-        where R: request::Request<Buffer>,
+    where
+        R: request::Request<Buffer>,
     {
         let mut write_buf = self.buffer_pool.create().unwrap();
 
@@ -143,14 +150,22 @@ impl Connection {
     }
 
     pub async fn make_request<Req, Resp, F>(&self, f: F) -> Result<Resp, Error>
-        where
-            Req: request::Request<Buffer>,
-            Resp: response::ResponseBody,
-            F: FnOnce(usize) -> Req,
+    where
+        Req: request::Request<Buffer>,
+        Resp: response::ResponseBody,
+        F: FnOnce(usize) -> Req,
     {
         let TarantoolResp {
-            header: response::ResponseHeader { response_code_indicator, .. },
-            cursor_ref: CursorRef { buffer_key, position },
+            header:
+                response::ResponseHeader {
+                    response_code_indicator,
+                    ..
+                },
+            cursor_ref:
+                CursorRef {
+                    buffer_key,
+                    position,
+                },
         } = {
             let (tx, rx) = oneshot::channel();
             let request_id = {
@@ -184,7 +199,9 @@ impl Connection {
                 let err_resp = response::ErrorResponse::decode(&mut cursor).unwrap();
                 Err(Error::TarantoolError(err_resp))
             }
-            _ => { panic!("error") }
+            _ => {
+                panic!("error")
+            }
         };
         self.buffer_pool.clear(buffer_key);
 
@@ -192,24 +209,30 @@ impl Connection {
     }
 
     pub async fn call<T, R>(&self, name: &str, data: &T) -> Result<R, Error>
-        where
-            T: Serialize,
-            R: DeserializeOwned,
+    where
+        T: Serialize,
+        R: DeserializeOwned,
     {
-        let resp: response::CallResponse<R> = self.make_request(|request_id| {
-            request::Call::new(request_id, name, data)
-        }).await?;
+        let resp: response::CallResponse<R> = self
+            .make_request(|request_id| request::Call::new(request_id, name, data))
+            .await?;
         Ok(resp.into_data())
     }
 
     pub async fn auth(&self, username: &str, password: Option<&str>) -> Result<(), Error> {
-        let _resp: response::EmptyResponse = self.make_request(|request_id| {
-            request::Auth::new(request_id, &self.salt, username, password)
-        }).await?;
+        let _resp: response::EmptyResponse = self
+            .make_request(|request_id| {
+                request::Auth::new(request_id, &self.salt, username, password)
+            })
+            .await?;
         Ok(())
     }
 
-    async fn writer(&self, mut requests_to_process_rx: mpsc::Receiver<usize>, write_stream: OwnedWriteHalf) -> std::io::Result<()> {
+    async fn writer(
+        &self,
+        mut requests_to_process_rx: mpsc::Receiver<usize>,
+        write_stream: OwnedWriteHalf,
+    ) -> std::io::Result<()> {
         use tokio::io::AsyncWriteExt;
 
         let mut write_stream = BufWriter::with_capacity(WRITE_BUFFER, write_stream);
@@ -291,14 +314,16 @@ impl Connection {
 
 #[cfg(test)]
 mod tests {
+    use super::Connection;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::time::timeout;
-    use super::Connection;
 
     const TESTING_HOST: &str = "localhost:3301";
 
-    async fn conn() -> Arc<Connection> { Connection::connect(TESTING_HOST).await.unwrap() }
+    async fn conn() -> Arc<Connection> {
+        Connection::connect(TESTING_HOST).await.unwrap()
+    }
 
     #[tokio::test]
     async fn client_test() {
@@ -307,10 +332,16 @@ mod tests {
 
         timeout(t, conn.auth("guest", None)).await.unwrap().unwrap();
 
-        let (result, ): (usize, ) = timeout(t, conn.call("sum", &(1, 2))).await.unwrap().unwrap();
+        let (result,): (usize,) = timeout(t, conn.call("sum", &(1, 2)))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(result, 3);
 
-        let (result, ): (usize, ) = timeout(t, conn.call("sum", &(1, 2))).await.unwrap().unwrap();
+        let (result,): (usize,) = timeout(t, conn.call("sum", &(1, 2)))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(result, 3);
     }
 
@@ -318,7 +349,10 @@ mod tests {
     #[should_panic]
     async fn test_tarantool_error() {
         let conn = conn().await;
-        let _: () = conn.call("not_existing_procedure", &(1, 2, 3)).await.unwrap();
+        let _: () = conn
+            .call("not_existing_procedure", &(1, 2, 3))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::io::Read;
+use crate::iproto::consts;
 use rmp_serde::decode::Error;
 use serde::de::DeserializeOwned;
-use crate::iproto::consts;
+use std::collections::HashMap;
+use std::io::Read;
 
 #[derive(Debug)]
 pub struct ResponseHeader {
@@ -43,7 +43,9 @@ impl ResponseHeader {
     pub fn request_id(&self) -> usize {
         self.request_id
     }
-    pub fn response_code_indicator(&self) -> u32 { self.response_code_indicator }
+    pub fn response_code_indicator(&self) -> u32 {
+        self.response_code_indicator
+    }
 }
 
 pub trait ResponseBody: Sized {
@@ -61,13 +63,14 @@ impl<B: ResponseBody> Response<B> {
     }
 }
 
-
 pub struct CallResponse<D: DeserializeOwned> {
     data: D,
 }
 
 impl<D: DeserializeOwned> CallResponse<D> {
-    pub fn into_data(self) -> D { self.data }
+    pub fn into_data(self) -> D {
+        self.data
+    }
 }
 
 impl<D: DeserializeOwned> ResponseBody for CallResponse<D> {
@@ -104,7 +107,6 @@ pub struct ErrorExtra {
     pub errcode: u64,
     pub error_fields: Option<HashMap<String, rmpv::Value>>,
 }
-
 
 #[derive(Debug)]
 pub struct ErrorResponse {
@@ -158,7 +160,8 @@ impl ResponseBody for ErrorResponse {
                                 error_line = Some(rmp::decode::read_int(reader)?);
                             }
                             consts::MP_ERROR_MESSAGE => {
-                                error_message = Some(rmp_serde::decode::from_read(reader.by_ref())?);
+                                error_message =
+                                    Some(rmp_serde::decode::from_read(reader.by_ref())?);
                             }
                             consts::MP_ERROR_ERRNO => {
                                 errno = Some(rmp::decode::read_int(reader)?);

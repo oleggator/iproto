@@ -1,10 +1,10 @@
+use crate::iproto::consts;
 use rmp::encode;
-use std::io::Write;
 use rmp::encode::ValueWriteError;
 use rmp_serde::encode::Error;
 use serde::Serialize;
-use crate::iproto::consts;
 use sha1::{Digest, Sha1};
+use std::io::Write;
 
 pub trait Request<W: Write> {
     const REQUEST_TYPE: u8;
@@ -22,11 +22,9 @@ pub trait Request<W: Write> {
 
         encode::write_pfix(wr, consts::IPROTO_REQUEST_TYPE)
             .map_err(ValueWriteError::InvalidMarkerWrite)?;
-        encode::write_pfix(wr, Self::REQUEST_TYPE)
-            .map_err(ValueWriteError::InvalidMarkerWrite)?;
+        encode::write_pfix(wr, Self::REQUEST_TYPE).map_err(ValueWriteError::InvalidMarkerWrite)?;
 
-        encode::write_pfix(wr, consts::IPROTO_SYNC)
-            .map_err(ValueWriteError::InvalidMarkerWrite)?;
+        encode::write_pfix(wr, consts::IPROTO_SYNC).map_err(ValueWriteError::InvalidMarkerWrite)?;
         encode::write_u64(wr, self.request_id() as u64)?;
 
         Ok(())
@@ -34,7 +32,6 @@ pub trait Request<W: Write> {
 
     fn encode_body(&self, wr: &mut W) -> Result<(), rmp_serde::encode::Error>;
 }
-
 
 pub struct Ping {
     request_id: usize,
@@ -53,7 +50,6 @@ impl<W: Write> Request<W> for Ping {
     }
 }
 
-
 pub struct Call<'a, T: Serialize> {
     request_id: usize,
     procedure_name: &'a str,
@@ -62,7 +58,11 @@ pub struct Call<'a, T: Serialize> {
 
 impl<'a, T: Serialize> Call<'a, T> {
     pub fn new(request_id: usize, procedure_name: &'a str, args: &'a T) -> Self {
-        Call { request_id, procedure_name, args }
+        Call {
+            request_id,
+            procedure_name,
+            args,
+        }
     }
 }
 
@@ -88,7 +88,6 @@ impl<'a, T: Serialize, W: Write> Request<W> for Call<'a, T> {
     }
 }
 
-
 pub struct Eval<'a, T: Serialize> {
     request_id: usize,
     expression: &'a str,
@@ -105,8 +104,7 @@ impl<'a, T: Serialize, W: Write> Request<W> for Eval<'a, T> {
     fn encode_body(&self, wr: &mut W) -> Result<(), rmp_serde::encode::Error> {
         encode::write_map_len(wr, 2)?;
 
-        encode::write_pfix(wr, consts::IPROTO_EXPR)
-            .map_err(ValueWriteError::InvalidMarkerWrite)?;
+        encode::write_pfix(wr, consts::IPROTO_EXPR).map_err(ValueWriteError::InvalidMarkerWrite)?;
         encode::write_str(wr, self.expression)?;
 
         encode::write_pfix(wr, consts::IPROTO_TUPLE)
@@ -126,15 +124,27 @@ pub struct Auth<'a> {
 }
 
 impl<'a> Auth<'a> {
-    pub fn new(request_id: usize, salt: &'a [u8], username: &'a str, password: Option<&'a str>) -> Self {
-        Auth { request_id, salt, username, password }
+    pub fn new(
+        request_id: usize,
+        salt: &'a [u8],
+        username: &'a str,
+        password: Option<&'a str>,
+    ) -> Self {
+        Auth {
+            request_id,
+            salt,
+            username,
+            password,
+        }
     }
 }
 
 impl<'a, W: Write> Request<W> for Auth<'a> {
     const REQUEST_TYPE: u8 = consts::IPROTO_AUTH;
 
-    fn request_id(&self) -> usize { self.request_id }
+    fn request_id(&self) -> usize {
+        self.request_id
+    }
 
     fn encode_body(&self, wr: &mut W) -> Result<(), Error> {
         let scramble = make_scramble(self.salt, self.password.unwrap_or(""));
