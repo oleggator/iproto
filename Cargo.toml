@@ -25,7 +25,7 @@ thiserror = "1.0"
 rmpv = { version = "1.0", features = ["with-serde"] }
 
 [workspace]
-members = ["bench"]
+members = ["tests/bench"]
 
 [profile.dev]
 opt-level = 3

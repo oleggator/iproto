@@ -13,7 +13,7 @@ tokio = { version = "1", features = ["full", "tracing"] }
 tikv-jemallocator = "0.4"
 
 [dependencies.iproto]
-path = ".."
+path = "../.."
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-uring = "0.4"

@@ -1,13 +1,9 @@
 /target
 /Cargo.lock
 .idea
+.vscode
 .DS_Store
 *.xlog
 *.snap
-cmake-build-*
-CMakeFiles
-*.cmake
-bench/tarantool/CMakeCache.txt
-bench/tarantool/Makefile
 *.so
 *.dylib
