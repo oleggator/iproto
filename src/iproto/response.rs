@@ -26,7 +26,7 @@ impl ResponseHeader {
                     request_id = Some(rmp::decode::read_u64(reader)? as usize);
                 }
                 consts::IPROTO_SCHEMA_VERSION => {
-                    rmp::decode::read_u32(reader)?;
+                    let _: u64 = rmp::decode::read_int(reader)?;
                 }
                 _ => {
                     panic!("invalid code");
