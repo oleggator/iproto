@@ -1,6 +1,6 @@
 pub mod client;
-pub mod server;
 mod iproto;
+pub mod server;
 mod utils;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;

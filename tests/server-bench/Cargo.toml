@@ -11,7 +11,7 @@ hdrhistogram = "7.2"
 tokio = { version = "1", features = ["full"] }
 
 [dependencies.iproto]
-path = ".."
+path = "../.."
 
 [target.'cfg(target_os = "linux")'.dependencies]
 tokio-uring = "0.4"

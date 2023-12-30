@@ -1,10 +1,11 @@
-use std::io;
 use iproto::server;
-
+use std::io;
 
 #[cfg(target_os = "macos")]
 fn main() -> io::Result<()> {
-    let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build()?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
     rt.block_on(test())
 }
 

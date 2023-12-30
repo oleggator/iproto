@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use crate::iproto::consts;
 use futures::future::try_join;
 use sharded_slab::Pool;
+use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
-use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
+use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
 use tokio::sync::mpsc::Sender;
-use crate::iproto::consts;
 
 pub async fn serve<A: ToSocketAddrs>(addr: A) -> std::io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
@@ -32,7 +32,11 @@ impl Connection {
         })
     }
 
-    pub async fn process<A: ToSocketAddrs>(self: Arc<Self>, mut socket: TcpStream, _addr: A) -> std::io::Result<()> {
+    pub async fn process<A: ToSocketAddrs>(
+        self: Arc<Self>,
+        mut socket: TcpStream,
+        _addr: A,
+    ) -> std::io::Result<()> {
         {
             let greeting = "Tarantool 2.8.2 (Binary) e5b9ac86-81bd-4042-b5f8-2e37bcfe4f38";
             let salt = "bCgy7N2ASRxzpE3XXdIzpBOizz+RA7z+actQZSaUOf8=";
@@ -91,7 +95,9 @@ impl Connection {
                         consts::IPROTO_SYNC => {
                             request_id = Some(read_int(&mut body_reader).unwrap());
                         }
-                        _ => { return Ok(()); }
+                        _ => {
+                            return Ok(());
+                        }
                     }
                 }
 
@@ -105,17 +111,24 @@ impl Connection {
                             let code = read_pfix(&mut body_reader).unwrap();
                             match code {
                                 consts::IPROTO_FUNCTION_NAME => {
-                                    procedure_name = Some(rmp_serde::decode::from_read(&mut body_reader).unwrap());
+                                    procedure_name = Some(
+                                        rmp_serde::decode::from_read(&mut body_reader).unwrap(),
+                                    );
                                 }
                                 consts::IPROTO_TUPLE => {
-                                    tuple = Some(rmpv::decode::read_value(&mut body_reader).unwrap());
+                                    tuple =
+                                        Some(rmpv::decode::read_value(&mut body_reader).unwrap());
                                 }
-                                _ => { return Ok(()); }
+                                _ => {
+                                    return Ok(());
+                                }
                             }
                         }
                     }
                     consts::IPROTO_PING => {}
-                    _ => { return Ok(()); }
+                    _ => {
+                        return Ok(());
+                    }
                 }
 
                 self.buffer_pool.clone().clear(buffer_key);
@@ -140,7 +153,7 @@ impl Connection {
                     write_map_len(&mut write_buffer_writer, 1).unwrap();
 
                     write_pfix(&mut write_buffer_writer, consts::IPROTO_DATA).unwrap();
-                    rmp_serde::encode::write(&mut write_buffer_writer, &(3, )).unwrap();
+                    rmp_serde::encode::write(&mut write_buffer_writer, &(3,)).unwrap();
                 }
 
                 buf.key()
@@ -149,7 +162,11 @@ impl Connection {
         }
     }
 
-    async fn reader(self: Arc<Self>, read_stream: OwnedReadHalf, req_s: async_channel::Sender<usize>) -> std::io::Result<()> {
+    async fn reader(
+        self: Arc<Self>,
+        read_stream: OwnedReadHalf,
+        req_s: async_channel::Sender<usize>,
+    ) -> std::io::Result<()> {
         let mut read_stream = BufReader::new(read_stream);
 
         let mut size_raw = [0; 5];
@@ -171,7 +188,11 @@ impl Connection {
         }
     }
 
-    async fn writer(&self, write_stream: OwnedWriteHalf, mut responses_to_send: tokio::sync::mpsc::Receiver<usize>) -> std::io::Result<()> {
+    async fn writer(
+        &self,
+        write_stream: OwnedWriteHalf,
+        mut responses_to_send: tokio::sync::mpsc::Receiver<usize>,
+    ) -> std::io::Result<()> {
         let mut write_stream = BufWriter::new(write_stream);
 
         let mut body_len = [0; 5];
@@ -179,7 +200,11 @@ impl Connection {
         loop {
             let write_buffer_key = responses_to_send.recv().await.unwrap();
             {
-                let write_buffer = self.buffer_pool.clone().get_owned(write_buffer_key).unwrap();
+                let write_buffer = self
+                    .buffer_pool
+                    .clone()
+                    .get_owned(write_buffer_key)
+                    .unwrap();
                 let mut body_len_writer: &mut [u8] = &mut body_len;
                 rmp::encode::write_u32(&mut body_len_writer, write_buffer.len() as u32).unwrap();
                 write_stream.write_all(&body_len).await.unwrap();
@@ -191,9 +216,14 @@ impl Connection {
             const OPTIMAL_PAYLOAD_SIZE: usize = 1000;
             while write_stream.buffer().len() < OPTIMAL_PAYLOAD_SIZE {
                 if let Ok(write_buffer_key) = responses_to_send.try_recv() {
-                    let write_buffer = self.buffer_pool.clone().get_owned(write_buffer_key).unwrap();
+                    let write_buffer = self
+                        .buffer_pool
+                        .clone()
+                        .get_owned(write_buffer_key)
+                        .unwrap();
                     let mut body_len_writer: &mut [u8] = &mut body_len;
-                    rmp::encode::write_u32(&mut body_len_writer, write_buffer.len() as u32).unwrap();
+                    rmp::encode::write_u32(&mut body_len_writer, write_buffer.len() as u32)
+                        .unwrap();
                     write_stream.write_all(&body_len).await.unwrap();
                     write_stream.write_all(&write_buffer).await.unwrap();
 
