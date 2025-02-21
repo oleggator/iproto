@@ -69,7 +69,7 @@ async fn test(calc_latency: bool) -> io::Result<()> {
             for j in 0..iterations_per_worker {
                 let begin = calc_latency.then(Instant::now);
 
-                let ((res,),): ((usize,),) = conn.call("procedures.sum", &(1, 2)).await.unwrap();
+                let (res,): (usize,) = conn.call("procedures.sum", &(1, 2)).await.unwrap();
                 assert_eq!(res, 3);
 
                 if let Some(begin) = begin {
