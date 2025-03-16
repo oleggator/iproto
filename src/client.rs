@@ -1,25 +1,26 @@
 use std::io::Cursor;
 use std::os::unix::io::AsRawFd;
 use std::sync::{
-    atomic::{AtomicU8, Ordering},
     Arc,
+    atomic::{AtomicU8, Ordering},
 };
 
 use futures::future::try_join;
 use nix::sys::socket;
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 use sharded_slab::{Pool, Slab};
 use thiserror::Error;
 use tokio::io::{BufReader, BufWriter};
 use tokio::net::{
-    tcp::{OwnedReadHalf, OwnedWriteHalf},
     TcpStream, ToSocketAddrs,
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
 };
-use tokio::sync::{mpsc, oneshot, Notify};
+use tokio::sync::{Notify, mpsc, oneshot};
 
 use crate::iproto::{consts, request, response};
 use crate::utils::SlabEntryGuard;
+use request::Request;
 use response::ResponseBody;
 
 const READ_BUFFER: usize = 128 * 1024;
@@ -76,7 +77,7 @@ const DISCONNECTED_STATE: u8 = 0;
 const CONNECTED_STATE: u8 = 0;
 
 impl Connection {
-    pub async fn connect<A: ToSocketAddrs>(addr: A) -> std::io::Result<Arc<Self>> {
+    pub async fn connect(addr: impl ToSocketAddrs) -> std::io::Result<Arc<Self>> {
         use tokio::io::AsyncReadExt;
 
         let stream = TcpStream::connect(addr).await?;
@@ -117,19 +118,14 @@ impl Connection {
 
         tokio::task::Builder::new()
             .name("iproto error catcher")
-            .spawn(async move {
-                match try_join(writer_task, reader_task).await {
-                    Ok(_) => {}
-                    Err(_) => {}
-                }
-            })?;
+            .spawn(async move { if let Ok(_) = try_join(writer_task, reader_task).await {} })?;
 
         Ok(conn)
     }
 
     fn write_req_to_buf<R>(&self, req: &R) -> Result<usize, rmp_serde::encode::Error>
     where
-        R: request::Request<Buffer>,
+        R: Request<Buffer>,
     {
         let mut write_buf = self.buffer_pool.create().unwrap();
 
@@ -149,7 +145,7 @@ impl Connection {
 
     pub async fn make_request<Req, Resp, F>(&self, f: F) -> Result<Resp, Error>
     where
-        Req: request::Request<Buffer>,
+        Req: Request<Buffer>,
         Resp: response::ResponseBody,
         F: FnOnce(usize) -> Req,
     {

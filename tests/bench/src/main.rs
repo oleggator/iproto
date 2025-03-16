@@ -93,8 +93,7 @@ async fn test(calc_latency: bool) -> io::Result<()> {
         println!();
         let mut latencies: Vec<u32> = result
             .into_iter()
-            .map(|result| result.unwrap())
-            .flatten()
+            .flat_map(|result| result.unwrap())
             .collect();
         latencies.sort_unstable();
 
@@ -127,7 +126,7 @@ trait Percentile<T: Copy> {
     fn percentile(&self, pct: f64) -> T;
 }
 
-impl<T: Copy> Percentile<T> for Vec<T> {
+impl<T: Copy> Percentile<T> for [T] {
     fn percentile(&self, pct: f64) -> T {
         let pos = (pct * (self.len() - 1) as f64) as usize;
         self[pos]

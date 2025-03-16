@@ -15,7 +15,7 @@ impl<'a, T> SlabEntryGuard<'a, T> {
     }
 }
 
-impl<'a, E> Drop for SlabEntryGuard<'a, E> {
+impl<E> Drop for SlabEntryGuard<'_, E> {
     fn drop(&mut self) {
         self.slab.remove(self.idx);
     }

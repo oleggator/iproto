@@ -66,7 +66,7 @@ impl<'a, T: Serialize> Call<'a, T> {
     }
 }
 
-impl<'a, T: Serialize, W: Write> Request<W> for Call<'a, T> {
+impl<T: Serialize, W: Write> Request<W> for Call<'_, T> {
     const REQUEST_TYPE: u8 = consts::IPROTO_CALL;
 
     fn request_id(&self) -> usize {
@@ -94,7 +94,7 @@ pub struct Eval<'a, T: Serialize> {
     args: &'a T,
 }
 
-impl<'a, T: Serialize, W: Write> Request<W> for Eval<'a, T> {
+impl<T: Serialize, W: Write> Request<W> for Eval<'_, T> {
     const REQUEST_TYPE: u8 = consts::IPROTO_CALL;
 
     fn request_id(&self) -> usize {
@@ -139,7 +139,7 @@ impl<'a> Auth<'a> {
     }
 }
 
-impl<'a, W: Write> Request<W> for Auth<'a> {
+impl<W: Write> Request<W> for Auth<'_> {
     const REQUEST_TYPE: u8 = consts::IPROTO_AUTH;
 
     fn request_id(&self) -> usize {
@@ -178,11 +178,11 @@ fn make_scramble(salt: &[u8], password: &str) -> [u8; SCRAMBLE_SIZE] {
     sha1.update(password);
     let hash1 = sha1.finalize_reset();
 
-    sha1.update(&hash1);
+    sha1.update(hash1);
     let hash2 = sha1.finalize_reset();
 
     sha1.update(&salt[..SCRAMBLE_SIZE]);
-    sha1.update(&hash2);
+    sha1.update(hash2);
     let hash3 = sha1.finalize();
 
     let mut hash4 = [0; SCRAMBLE_SIZE];
