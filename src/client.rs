@@ -1,10 +1,11 @@
 use std::io::Cursor;
-use std::os::unix::io::AsRawFd;
 use std::sync::{
     Arc,
     atomic::{AtomicU8, Ordering},
 };
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as Base64Engine;
 use futures::future::try_join;
 use nix::sys::socket;
 use serde::Serialize;
@@ -81,14 +82,15 @@ impl Connection {
         use tokio::io::AsyncReadExt;
 
         let stream = TcpStream::connect(addr).await?;
-        let mss = socket::getsockopt(stream.as_raw_fd(), socket::sockopt::TcpMaxSeg)?;
+        let mss = socket::getsockopt(&stream, socket::sockopt::TcpMaxSeg)?;
 
         let (mut read_stream, write_stream) = stream.into_split();
         let salt = {
             let mut greeting_raw = [0; 128];
             read_stream.read_exact(&mut greeting_raw).await?;
             let salt_b64 = std::str::from_utf8(&greeting_raw[64..108]).unwrap().trim();
-            base64::decode(salt_b64).unwrap()
+
+            Base64Engine.decode(salt_b64).unwrap()
         };
 
         let (requests_to_process_tx, requests_to_process_rx) = mpsc::channel(REQ_CHANNEL_BUFFER);
