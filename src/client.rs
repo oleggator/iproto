@@ -6,6 +6,7 @@ use std::sync::{
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as Base64Engine;
+use futures::FutureExt;
 use futures::future::try_join;
 use nix::sys::socket;
 use serde::Serialize;
@@ -17,7 +18,7 @@ use tokio::net::{
     TcpStream, ToSocketAddrs,
     tcp::{OwnedReadHalf, OwnedWriteHalf},
 };
-use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::iproto::{consts, request, response};
 use crate::utils::SlabEntryGuard;
@@ -32,7 +33,7 @@ const REQ_CHANNEL_BUFFER: usize = 16 * 1024;
 
 type Buffer = Vec<u8>;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum Error {
     #[error("tarantool error")]
     TarantoolError(response::ErrorResponse),
@@ -42,6 +43,8 @@ pub enum Error {
     InvalidDecoding,
     #[error("error")]
     ErrorCode(u8),
+    #[error("connection error")]
+    ConnectionError(Arc<std::io::Error>),
 }
 
 #[derive(Debug)]
@@ -72,10 +75,12 @@ pub struct Connection {
 
     salt: Vec<u8>,
     mss: u32,
+
+    error_rx: watch::Receiver<Option<Error>>,
 }
 
 const DISCONNECTED_STATE: u8 = 0;
-const CONNECTED_STATE: u8 = 0;
+const CONNECTED_STATE: u8 = 1;
 
 impl Connection {
     pub async fn connect(addr: impl ToSocketAddrs) -> std::io::Result<Arc<Self>> {
@@ -94,6 +99,8 @@ impl Connection {
         };
 
         let (requests_to_process_tx, requests_to_process_rx) = mpsc::channel(REQ_CHANNEL_BUFFER);
+        let (error_tx, error_rx) = tokio::sync::watch::channel(None);
+
         let conn = Arc::new(Connection {
             state: AtomicU8::new(CONNECTED_STATE),
             requests_to_process_tx,
@@ -102,6 +109,7 @@ impl Connection {
             buffer_pool: Arc::new(Pool::new()),
             salt,
             mss,
+            error_rx,
         });
 
         let writer_conn = conn.clone();
@@ -120,7 +128,14 @@ impl Connection {
 
         tokio::task::Builder::new()
             .name("iproto error catcher")
-            .spawn(async move { if let Ok(_) = try_join(writer_task, reader_task).await {} })?;
+            .spawn(async move {
+                match try_join(writer_task, reader_task).await.unwrap() {
+                    (Ok(()), Ok(())) => {}
+                    (Err(err), _) | (_, Err(err)) => {
+                        let _ = error_tx.send(Some(Error::ConnectionError(Arc::new(err))));
+                    }
+                }
+            })?;
 
         Ok(conn)
     }
@@ -145,7 +160,7 @@ impl Connection {
         Ok(write_buf.key())
     }
 
-    pub async fn make_request<Req, Resp, F>(&self, f: F) -> Result<Resp, Error>
+    async fn make_request_inner<Req, Resp, F>(&self, f: F) -> Result<Resp, Error>
     where
         Req: Request<Buffer>,
         Resp: response::ResponseBody,
@@ -202,6 +217,32 @@ impl Connection {
         self.buffer_pool.clear(buffer_key);
 
         result
+    }
+
+    fn await_err(&self) -> impl Future<Output = Error> {
+        let mut error_rx = self.error_rx.clone();
+
+        async move {
+            if let Some(err) = error_rx.borrow().as_ref() {
+                return err.clone();
+            }
+
+            let result = error_rx.changed().await;
+            result.unwrap();
+            error_rx.borrow().clone().unwrap()
+        }
+    }
+
+    pub async fn make_request<Req, Resp, F>(&self, f: F) -> Result<Resp, Error>
+    where
+        Req: Request<Buffer>,
+        Resp: response::ResponseBody,
+        F: FnOnce(usize) -> Req,
+    {
+        use futures_lite::FutureExt;
+        self.make_request_inner(f)
+            .or(self.await_err().map(Err))
+            .await
     }
 
     pub async fn call<T, R>(&self, name: &str, data: &T) -> Result<R, Error>

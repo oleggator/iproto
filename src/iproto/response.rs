@@ -97,7 +97,7 @@ impl<D: DeserializeOwned> ResponseBody for CallResponse<D> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ErrorExtra {
     pub error_type: String,
     pub error_file: String,
@@ -108,7 +108,7 @@ pub struct ErrorExtra {
     pub error_fields: Option<HashMap<String, rmpv::Value>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ErrorResponse {
     pub error: String,
     pub error_extra: Option<ErrorExtra>,
